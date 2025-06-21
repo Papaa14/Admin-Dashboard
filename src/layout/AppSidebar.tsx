@@ -45,8 +45,7 @@ const navItems: NavItem[] = [
       icon: <DownloadIcon />,
     name: "Uploads",
   
-    subItems: [{ name: "View Configs", path: "/config-form", pro: false },{ name: "Upload Configs", path: "/uploadConfigs", pro: false },
-    { name: "Add new configs", path: "/addConfigs", pro: false },
+    subItems: [{ name: "View Configs", path: "/config-form", pro: false },   
     { name: "Add new slider Images", path: "/addImages", pro: false },
     { name: "Add new Faqs", path: "/addFaq", pro: false },
     { name: "Form Elements", path: "/form-elements", pro: false }

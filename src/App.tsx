@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from "react-router";
 import SignIn from "./pages/AuthPages/SignIn";
 import SignUp from "./pages/AuthPages/SignUp";
 import NotFound from "./pages/OtherPage/NotFound";
-import TicketChatView  from "./pages/OtherPage/TicketChat";
+import TicketChatView from "./pages/OtherPage/TicketChat";
 import UserProfiles from "./pages/UserProfiles";
 import Videos from "./pages/UiElements/Videos";
 import Images from "./pages/UiElements/Images";
@@ -15,10 +15,8 @@ import BarChart from "./pages/Charts/BarChart";
 import Calendar from "./pages/Calendar";
 import BasicTables from "./pages/Tables/BasicTables";
 import FormElements from "./pages/Forms/FormElements";
-import UploadConfigs from "./pages/Forms/ConfigImageUpload";
 import ConfigForm from "./pages/Forms/ConfigForm";
 import SupportImageUI from "./pages/Forms/AddImages";
-import TextEntryForm from "./pages/Forms/AddConfig";
 import SupportFaqUI from "./pages/Forms/AddFaq";
 import Blank from "./pages/Blank";
 import AppLayout from "./layout/AppLayout";
@@ -40,19 +38,17 @@ export default function App() {
             <Route path="/profile" element={<UserProfiles />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/blank" element={<Blank />} />
-               <Route path="/ticket-chat" element={<TicketChatView />} />
+            <Route path="/ticket-chat" element={<TicketChatView />} />
 
             {/* Forms */}
-              <Route path="/config-form" element={<ConfigForm />} />
+            <Route path="/config-form" element={<ConfigForm />} />
             <Route path="/form-elements" element={<FormElements />} />
-             <Route path="/uploadConfigs" element={<UploadConfigs />} />
-                <Route path="/addConfigs" element={<TextEntryForm/>} />
-                 <Route path="/addImages" element={<SupportImageUI/>} />
-                  <Route path="/addFaq" element={<SupportFaqUI/>} />
+            <Route path="/addImages" element={<SupportImageUI />} />
+            <Route path="/addFaq" element={<SupportFaqUI />} />
 
             {/* Tables */}
             <Route path="/basic-tables" element={<BasicTables />} />
-             <Route path="/tickets" element={<TicketTable />} />
+            <Route path="/tickets" element={<TicketTable />} />
 
             {/* Ui Elements */}
             <Route path="/alerts" element={<Alerts />} />

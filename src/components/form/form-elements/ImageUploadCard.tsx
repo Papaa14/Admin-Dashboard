@@ -1,7 +1,5 @@
 import { useState, ChangeEvent } from 'react';
 import { Upload, X, File, Image, FileText, Plus } from 'lucide-react';
-import api from "../../../Api/api";
-import Alert from "../../../components/ui/alert/Alert";
 
 interface ImageUploadCardProps {
   title: string;
@@ -15,63 +13,29 @@ interface ImageUploadCardProps {
   onFilesSelect?: (files: File[]) => void;
 }
 
-// Define proper error types
-interface ApiError {
-  response?: {
-    data?: {
-      message?: string;
-    };
-  };
-  message?: string;
-}
-
-interface ApiResponse {
-  data?: {
-    message?: string;
-  };
-}
-
 const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesSelect }: ImageUploadCardProps) => {
   const [file, setFile] = useState<File | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
-  const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   const isCollection = type === 'collection';
   const maxFiles = rules.max || 10;
 
-  const simulateUpload = (fileName: string) => {
-    setUploadProgress(prev => ({ ...prev, [fileName]: 0 }));
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        const currentProgress = prev[fileName] || 0;
-        if (currentProgress >= 100) {
-          clearInterval(interval);
-          return { ...prev, [fileName]: 100 };
-        }
-        return { ...prev, [fileName]: currentProgress + 5 };
-      });
-    }, 300);
-  };
-
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = event.target.files;
     if (isCollection && selectedFiles) {
       const newFiles = Array.from(selectedFiles);
       const updatedFiles = [...files, ...newFiles].slice(0, maxFiles);
       setFiles(updatedFiles);
       onFilesSelect?.(updatedFiles);
-      await uploadFiles(newFiles);
     } else if (!isCollection && selectedFiles?.[0]) {
       const selectedFile = selectedFiles[0];
       setFile(selectedFile);
       onFileSelect(selectedFile);
-      await uploadFile(selectedFile);
     }
   };
 
-  const handleDrop = async (e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     const droppedFiles = Array.from(e.dataTransfer.files);
@@ -79,66 +43,10 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
       const updatedFiles = [...files, ...droppedFiles].slice(0, maxFiles);
       setFiles(updatedFiles);
       onFilesSelect?.(updatedFiles);
-      await uploadFiles(droppedFiles);
     } else if (droppedFiles[0]) {
       const droppedFile = droppedFiles[0];
       setFile(droppedFile);
       onFileSelect(droppedFile);
-      await uploadFile(droppedFile);
-    }
-  };
-
-  const uploadFile = async (file: File) => {
-    const formData = new FormData();
-    formData.append('config_name', title);
-    formData.append('file', file);
-
-    try {
-      // Use the correct endpoint from your controller
-      const response: ApiResponse = await api.post('/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-      
-      const message = response.data?.message || 'File uploaded successfully!';
-      setAlertMessage(message);
-      simulateUpload(file.name);
-      setTimeout(() => setAlertMessage(null), 3000);
-    } catch (error) {
-      console.error('Error uploading file:', error);
-      const apiError = error as ApiError;
-      const errorMessage = apiError.response?.data?.message || apiError.message || 'Failed to upload file.';
-      setAlertMessage(errorMessage);
-      setTimeout(() => setAlertMessage(null), 3000);
-    }
-  };
-
-  const uploadFiles = async (files: File[]) => {
-    // For collection type, we need to upload files one by one since your controller handles single files
-    const uploadPromises = files.map(file => {
-      const formData = new FormData();
-      formData.append('config_name', title);
-      formData.append('file', file);
-      return api.post('/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-    });
-
-    try {
-      const responses: ApiResponse[] = await Promise.all(uploadPromises);
-      const message = responses[0]?.data?.message || `${files.length} file${files.length !== 1 ? 's' : ''} uploaded successfully!`;
-      setAlertMessage(message);
-      files.forEach(file => simulateUpload(file.name));
-      setTimeout(() => setAlertMessage(null), 3000);
-    } catch (error) {
-      console.error('Error uploading files:', error);
-      const apiError = error as ApiError;
-      const errorMessage = apiError.response?.data?.message || apiError.message || 'Failed to upload files.';
-      setAlertMessage(errorMessage);
-      setTimeout(() => setAlertMessage(null), 3000);
     }
   };
 
@@ -157,14 +65,8 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
       const updatedFiles = files.filter(f => f.name !== fileName);
       setFiles(updatedFiles);
       onFilesSelect?.(updatedFiles);
-      setUploadProgress(prev => {
-        const newProgress = { ...prev };
-        delete newProgress[fileName];
-        return newProgress;
-      });
     } else {
       setFile(null);
-      setUploadProgress({});
       onFileSelect(null);
     }
   };
@@ -177,7 +79,6 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
       setFile(null);
       onFileSelect(null);
     }
-    setUploadProgress({});
   };
 
   const getFileIcon = (fileName: string) => {
@@ -207,15 +108,6 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
 
   return (
     <div className="w-full max-w-md mx-auto bg-white border rounded-lg shadow-sm">
-      {alertMessage && (
-        <Alert
-          variant={alertMessage.includes('Failed') ? 'error' : 'success'}
-          title={alertMessage.includes('Failed') ? 'Error' : 'Success'}
-          message={alertMessage}
-          showLink={false}
-        />
-      )}
-      {/* Header */}
       <div className="flex items-center justify-between p-4 border-b">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">{formatTitle(title)}</h2>
@@ -232,8 +124,6 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
           <X className="w-5 h-5 text-gray-500" />
         </button>
       </div>
-
-      {/* Upload Area */}
       <div className="p-6">
         {(!hasFiles || canAddMore) && (
           <div
@@ -265,8 +155,8 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
                 <p className="text-sm font-medium text-gray-900">
                   <span className="text-purple-600 hover:text-purple-500 cursor-pointer">
                     {hasFiles && canAddMore ? 'Add More Files' : 'Click to Upload'}
-                  </span>
-                  {' '}or drag and drop
+                  </span>{' '}
+                  or drag and drop
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
                   {rules.aspectRatio && `${rules.aspectRatio.width}:${rules.aspectRatio.height} ratio • `}
@@ -276,8 +166,6 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
             </div>
           </div>
         )}
-
-        {/* File List */}
         {hasFiles && (
           <div className="space-y-2">
             {isCollection ? (
@@ -291,19 +179,8 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
                           {fileItem.name}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {formatFileSize(fileItem.size)} • {
-                            (uploadProgress[fileItem.name] ?? 0) === 100 ? 'Completed' : `${uploadProgress[fileItem.name] ?? 0}%`
-                          }
+                          {formatFileSize(fileItem.size)}
                         </p>
-                        {/* Progress Bar */}
-                        {(uploadProgress[fileItem.name] ?? 0) < 100 && (
-                          <div className="w-full bg-gray-200 rounded-full h-1 mt-2">
-                            <div
-                              className="bg-purple-600 h-1 rounded-full transition-all duration-300"
-                              style={{ width: `${uploadProgress[fileItem.name] ?? 0}%` }}
-                            ></div>
-                          </div>
-                        )}
                       </div>
                     </div>
                     <button
@@ -324,19 +201,8 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
                       {file.name}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {formatFileSize(file.size)} • {
-                        (uploadProgress[file.name] ?? 0) === 100 ? 'Completed' : `${uploadProgress[file.name] ?? 0}%`
-                      }
+                      {formatFileSize(file.size)}
                     </p>
-                    {/* Progress Bar */}
-                    {(uploadProgress[file.name] ?? 0) < 100 && (
-                      <div className="w-full bg-gray-200 rounded-full h-1 mt-2">
-                        <div
-                          className="bg-purple-600 h-1 rounded-full transition-all duration-300"
-                          style={{ width: `${uploadProgress[file.name] ?? 0}%` }}
-                        ></div>
-                      </div>
-                    )}
                   </div>
                 </div>
                 <button
@@ -349,8 +215,6 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
             )}
           </div>
         )}
-
-        {/* Collection Status */}
         {isCollection && files.length > 0 && (
           <div className="mt-4 p-3 bg-blue-50 rounded-lg">
             <p className="text-sm text-blue-800">
@@ -361,26 +225,6 @@ const ImageUploadCard = ({ title, rules, type = 'single', onFileSelect, onFilesS
             </p>
           </div>
         )}
-      </div>
-
-      {/* Footer Buttons */}
-      <div className="flex space-x-3 p-4 border-t bg-gray-50">
-        <button
-          onClick={removeAllFiles}
-          className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
-        >
-          Clear All
-        </button>
-        <button
-          className={`flex-1 px-4 py-2 text-white rounded-lg transition-colors ${
-            hasFiles && Object.values(uploadProgress).every(progress => progress === 100)
-              ? 'bg-purple-600 hover:bg-purple-700'
-              : 'bg-gray-300 cursor-not-allowed'
-          }`}
-          disabled={!hasFiles || !Object.values(uploadProgress).every(progress => progress === 100)}
-        >
-          {isCollection ? `Attach ${files.length} file${files.length !== 1 ? 's' : ''}` : 'Attach file'}
-        </button>
       </div>
     </div>
   );
