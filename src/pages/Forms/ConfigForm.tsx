@@ -1,4 +1,4 @@
-import { useState, useEffect, ChangeEvent } from 'react';
+import { useState, useEffect } from 'react';
 import ImageUploadCard from "../../components/form/form-elements/ImageUploadCard";
 import api from "../../Api/api";
 import PageMeta from "../../components/common/PageMeta";
@@ -10,26 +10,14 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
-import { Edit2, Trash2, Save, X, Upload } from 'lucide-react';
-import { showSuccessToast, showErrorToast, confirmDelete } from '../../components/ui/alert/ToastMessages';
+import { Edit2, Trash2, Save, X } from 'lucide-react';
 
 interface Config {
   id?: number;
   name: string;
   value: string;
   avatarId?: number;
-}
-
-interface Avatar {
-  id: number; // Frontend ID for React keys
-  originalId: string; // Unique server ID with avatar_path prefix
-  url: string;
-  name: string;
-}
-
-interface SupportNumber {
-  id: number;
-  value: string;
+    uniqueAvatarId?: string;
 }
 
 interface ApiResponse {
@@ -39,23 +27,20 @@ interface ApiResponse {
     [key: string]: {
       path?: string;
       url?: string;
-      id?: string;
-    } | string | Array<SupportNumber> | object;
+    } | string | Array<{ id: number; value: string }> | object; // Loosen type for avatar_paths
   }>;
   error: string | null;
 }
 
 const ConfigForm = () => {
   const [configs, setConfigs] = useState<Config[]>([]);
-  const [avatarPaths, setAvatarPaths] = useState<Avatar[]>([]);
   const [editingConfig, setEditingConfig] = useState<Config | null>(null);
-  const [editingAvatarId, setEditingAvatarId] = useState<number | null>(null);
-  const [supportNumbers, setSupportNumbers] = useState<SupportNumber[]>([]);
+  const [editValue, setEditValue] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newConfigName, setNewConfigName] = useState('');
   const [newConfigValue, setNewConfigValue] = useState('');
-  const [newConfigFiles, setNewConfigFiles] = useState<File[]>([]);
+  const [newConfigFile, setNewConfigFile] = useState<File | null>(null);
 
   useEffect(() => {
     const fetchConfigs = async () => {
@@ -64,335 +49,201 @@ const ConfigForm = () => {
         if (response.data.status === "success" && response.data.data.length > 0) {
           const configData = response.data.data[0];
           const transformedConfigs: Config[] = [];
-          const loadedAvatars: Avatar[] = [];
-          
+
           Object.entries(configData).forEach(([key, value]) => {
-            if (key === 'avatar_paths' && typeof value === 'object' && value !== null) {
-              const avatarMap = value as Record<string, Record<string, { 
-                path: string; 
-                url: string;
-                id?: string;
-              }>>;
-              
-              Object.entries(avatarMap).forEach(([groupId, groupAvatars]) => {
-                Object.entries(groupAvatars).forEach(([avatarIndex, avatarData]) => {
-                  if (avatarData && typeof avatarData === 'object' && 'url' in avatarData) {
-                    const uniqueId = `avatar_path_${groupId}_${avatarIndex}`;
-                    loadedAvatars.push({
-                      id: Date.now() + loadedAvatars.length,
-                      originalId: avatarData.id || uniqueId,
-                      url: avatarData.url,
-                      name: `Avatar ${avatarData.id || uniqueId}`,
+            if (key === 'support_number' && Array.isArray(value)) {
+              const supportNumbers = (value as Array<{ id: number; value: string }>).map(item => item.value).join(', ');
+              transformedConfigs.push({
+                name: key,
+                value: supportNumbers,
+              });
+            } else if (key === 'avatar_paths' && typeof value === 'object' && value !== null) {
+              // CORRECTED LOGIC HERE
+              // `value` is {"13": { "0": {...}, "1": {...} }}
+              // We get the inner object which contains the actual avatars.
+              const avatarsObject = Object.values(value as object)[0];
+              if (avatarsObject) {
+                Object.entries(avatarsObject).forEach(([avatarId, avatarData]) => {
+                  // Now, avatarId is "0", "1", etc. and avatarData is { path: "...", url: "..." }
+                  if (avatarData && typeof avatarData === 'object' && 'url' in avatarData && 'id' in avatarData) {
+                    transformedConfigs.push({
+                      name: `Avatar ${avatarId}`,
+                      value: (avatarData as { url: string }).url, // Correctly access the url
+                      avatarId: parseInt(avatarId, 10),
+                        uniqueAvatarId: (avatarData as { id: string }).id,
                     });
                   }
                 });
-              });
-
-              transformedConfigs.push({
-                name: 'avatar_paths',
-                value: `${loadedAvatars.length} avatars loaded`,
-              });
-            } else if (key === 'support_number' && Array.isArray(value)) {
-              const supportNumbers = value as Array<SupportNumber>;
-              setSupportNumbers(supportNumbers);
-              const supportNumbersString = supportNumbers.map(item => item.value).join(', ');
-              transformedConfigs.push({
-                name: key,
-                value: supportNumbersString,
-              });
+              }
             } else if (typeof value === 'object' && value !== null && 'url' in value && (value as {url: string}).url) {
               transformedConfigs.push({ name: key, value: (value as {url: string}).url });
             } else if (typeof value === 'string') {
               transformedConfigs.push({ name: key, value });
             }
           });
-          
-          setAvatarPaths(loadedAvatars);
+
           setConfigs(transformedConfigs);
         } else {
           setError(response.data.message || "No configs found.");
         }
-      } catch (error: unknown) {
+      } catch (error) {
         console.error('Error fetching configs:', error);
         setError("Failed to fetch configurations.");
       }
     };
+
     fetchConfigs();
   }, []);
 
   const handleEdit = (config: Config) => {
     setEditingConfig(config);
+    setEditValue(config.value);
   };
 
-  const handleCancelEdit = () => {
-    setEditingConfig(null);
-    setEditingAvatarId(null);
-  };
+  const handleSave = async () => {
+  if (!editingConfig) return;
 
-  const handleAvatarEdit = (avatarId: number) => {
-    setEditingAvatarId(avatarId);
-  };
+  try {
+    if (editingConfig.uniqueAvatarId !== undefined) {
+      // Handle avatar update
+      const formData = new FormData();
+      if (newConfigFile) {
+        formData.append('file', newConfigFile);
+      }
 
-  const handleAvatarUpdate = async (file: File | null, avatar: Avatar) => {
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('avatar_id', avatar.originalId);
-
-    try {
-      const response = await api.post('/avatar-update', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const response = await api.post(`/avatar-update/${editingConfig.uniqueAvatarId}`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       });
 
       if (response.data.status === 'success') {
-        const newUrl = response.data.data.config_value.url;
-        setAvatarPaths(currentAvatars =>
-          currentAvatars.map(a =>
-            a.originalId === avatar.originalId ? { ...a, url: newUrl } : a
+        setConfigs(
+          configs.map((config) =>
+            config.avatarId === editingConfig.avatarId
+              ? { ...config, value: response.data.data.url || editValue }
+              : config
           )
         );
-        setEditingAvatarId(null);
-        showSuccessToast(`Avatar updated successfully!`);
-      } else {
-        showErrorToast(response.data.message || 'Failed to update avatar.');
+        setEditingConfig(null);
+        setNewConfigFile(null);
       }
-    } catch (err: unknown) {
-      console.error('Error updating avatar:', err);
-      const errorMessage = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'An error occurred.';
-      showErrorToast(errorMessage);
-    }
-  };
+    } else {
+      // Handle regular config update
+      const endpoint = `/update/${editingConfig.name}`;
+      const response = await api.put(endpoint, {
+        config_value: editValue,
+      });
 
-  const handleSave = async (id?: number) => {
-    if (!editingConfig) return;
-    try {
-      if (editingConfig.name === 'support_number' && id !== undefined) {
-        const numberToSave = supportNumbers.find(number => number.id === id);
-        if (numberToSave) {
-          const response = await api.put(`/update/${editingConfig.name}`, {
-            config_name: editingConfig.name,
-            config_value: numberToSave.value,
-          });
-          if (response.data.status === 'success') {
-            const updatedSupportNumbersString = supportNumbers.map(number =>
-              number.id === id ? numberToSave : number
-            ).map(number => number.value).join(', ');
-            setConfigs(
-              configs.map(config =>
-                config.name === 'support_number' ? { ...config, value: updatedSupportNumbersString } : config
-              )
-            );
-            showSuccessToast(response.data.message || 'Configuration updated successfully');
-          }
-        }
-      } else {
-        const response = await api.put(`/update/${editingConfig.name}`, {
-          config_name: editingConfig.name,
-          config_value: editingConfig.value,
-        });
-        if (response.data.status === 'success') {
-          setConfigs(
-            configs.map((config) =>
-              config.name === editingConfig.name
-                ? { ...config, value: editingConfig.value }
-                : config
-            )
-          );
-          setEditingConfig(null);
-        }
-        showSuccessToast(response.data.message || 'Configuration updated successfully');
+      if (response.data.status === 'success') {
+        setConfigs(
+          configs.map((config) =>
+            config.name === editingConfig.name
+              ? { ...config, value: editValue }
+              : config
+          )
+        );
+        setEditingConfig(null);
       }
-    } catch (error: unknown) {
-      console.error('Error saving config:', error);
-      const errorMessage = (error as { response?: { data?: { message?: string } } }).response?.data?.message || 'Failed to save configuration';
-      showErrorToast(errorMessage);
     }
-  };
+  } catch (error) {
+    console.error('Error saving config:', error);
+    setError('Failed to save configuration');
+  }
+};
 
-  const handleSingleFileUpdate = async (file: File | null) => {
-    if (!file || !editingConfig) return;
 
-    const formData = new FormData();
-    formData.append('config_name', editingConfig.name);
-    formData.append('file', file);
-    
-    try {
-        const response = await api.post('/upload', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        });
-
-        if (response.data.status === 'success') {
-            const newUrl = response.data.data.config_value.url;
-            setConfigs(configs.map(c => c.name === editingConfig.name ? { ...c, value: newUrl } : c));
-            setEditingConfig(null);
-            showSuccessToast('Image updated successfully!');
-        }
-    } catch (error: unknown) {
-        const errorMessage = (error as { response?: { data?: { message?: string } } }).response?.data?.message || 'Failed to upload image.';
-        showErrorToast(errorMessage);
-    }
-  };
-
-  const handleTextInputChange = (id: number) => (e: ChangeEvent<HTMLInputElement>) => {
-    const updatedNumbers = supportNumbers.map(number =>
-      number.id === id ? { ...number, value: e.target.value } : number
-    );
-    setSupportNumbers(updatedNumbers);
-  };
-
-  const handleDeleteNumber = async (id: number) => {
-    try {
-      await api.delete(`/${id}`);
-      const updatedNumbers = supportNumbers.filter(number => number.id !== id);
-      setSupportNumbers(updatedNumbers);
-      const updatedSupportNumbersString = updatedNumbers.map(number => number.value).join(', ');
-      setConfigs(
-        configs.map(config =>
-          config.name === 'support_number' ? { ...config, value: updatedSupportNumbersString } : config
-        )
-      );
-    } catch (error: unknown) {
-      console.error('Error deleting support number:', error);
-      const errorMessage = (error as { response?: { data?: { message?: string } } }).response?.data?.message || 'Failed to delete support number';
-      showErrorToast(errorMessage);
-    }
-  };
-
-  const handleDeleteAvatar = async (avatar: Avatar) => {
-    const isConfirmed = await confirmDelete(avatar.name, async () => {
-      try {
-        const response = await api.delete(`/avatar/${avatar.originalId}`);
-        setAvatarPaths(avatarPaths.filter(a => a.originalId !== avatar.originalId));
-        const remainingCount = avatarPaths.length - 1;
-        setConfigs(configs.map(config => 
-          config.name === 'avatar_paths' 
-            ? { ...config, value: `${remainingCount} avatars loaded` }
-            : config
-        ));
-        showSuccessToast(response.data.message || "Avatar deleted successfully");
-      } catch (error: unknown) {
-        const errorMessage = (error as { response?: { data?: { message?: string } } }).response?.data?.message || 'Failed to delete avatar';
-        showErrorToast(errorMessage);
-      }
-    });
-    if (!isConfirmed) return;
+  const handleTextInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditValue(e.target.value);
   };
 
   const handleDelete = async (config: Config) => {
-    const isConfirmed = await confirmDelete(config.name, async () => {
-      try {
-        let endpoint: string;
-        if (config.avatarId !== undefined) {
-          endpoint = `/${config.avatarId}`;
-        } else if (config.name) {
-          endpoint = `/delete/${config.name}`;
-        } else {
-          console.warn('No valid identifier for deletion');
-          return;
-        }
-        const response = await api.delete(endpoint);
-        setConfigs(configs.filter((c) => c !== config));
-        showSuccessToast(response.data.message || "Configuration deleted successfully");
-      } catch (error: unknown) {
-        const errorMessage =
-          (error as { response?: { data?: { message?: string } } }).response?.data?.message ||
-          'Failed to delete configuration';
-        showErrorToast(errorMessage);
-      }
-    });
-    if (!isConfirmed) return;
-  };
-
-  const handleFileSelect = (file: File | null) => {
-    if (!file) return;
-    setNewConfigFiles([file]);
-  };
-
-  const handleFilesSelect = (files: File[]) => {
-    setNewConfigFiles(files);
-  };
-
-  const handleAddNewConfig = async () => {
     try {
-      if (newConfigFiles.length > 0) {
-        if (newConfigName === 'avatar_paths') {
-          const uploadPromises = newConfigFiles.map((file) => {
-            const formData = new FormData();
-            formData.append('config_name', `avatar_paths`);
-            formData.append('file', file);
-            return api.post('/upload', formData, {
-              headers: {
-                'Content-Type': 'multipart/form-data',
-              },
-            });
-          });
-
-          const responses = await Promise.all(uploadPromises);
-          if (responses.every(response => response.data.status === 'success')) {
-            const newAvatars = responses.map((response, index) => ({
-              id: Date.now() + index,
-              originalId: response.data.data.config_value.id || `avatar_path_${Date.now()}_${index}`,
-              url: response.data.data.config_value.url,
-              name: `Avatar ${response.data.data.config_value.id || index}`,
-            }));
-            setAvatarPaths([...avatarPaths, ...newAvatars]);
-            const totalCount = avatarPaths.length + newAvatars.length;
-            setConfigs(configs.map(config => 
-              config.name === 'avatar_paths' 
-                ? { ...config, value: `${totalCount} avatars loaded` }
-                : config
-            ));
-            setShowAddForm(false);
-            setNewConfigName('');
-            setNewConfigFiles([]);
-            showSuccessToast('Avatars uploaded successfully!');
-          }
-        } else {
-          const formData = new FormData();
-          formData.append('config_name', newConfigName);
-          formData.append('file', newConfigFiles[0]);
-          
-          const response = await api.post('/upload', formData, {
-            headers: {
-              'Content-Type': 'multipart/form-data',
-            },
-          });
-
-          if (response.data.status === 'success') {
-            const newUrl = response.data.data.config_value.url;
-            setConfigs([...configs, { name: newConfigName, value: newUrl }]);
-            setShowAddForm(false);
-            setNewConfigName('');
-            setNewConfigFiles([]);
-            showSuccessToast('Configuration added successfully!');
-          }
-        }
+      // Note: You may need a specific endpoint for deleting avatars
+      if (config.id || config.avatarId !== undefined) {
+         const endpoint = config.uniqueAvatarId !== undefined
+            ? `/avatar-delete/${config.uniqueAvatarId}` // Example endpoint
+            : `/config/${config.id}`;
+        await api.delete(endpoint);
+        setConfigs(configs.filter((c) => c !== config));
       } else {
-        const response = await api.post('/upload-configValue', {
-          config_name: newConfigName,
-          config_value: newConfigValue,
-        });
-
-        if (response.data.status === 'success') {
-          setConfigs([...configs, { name: newConfigName, value: newConfigValue }]);
-          setShowAddForm(false);
-          setNewConfigName('');
-          setNewConfigValue('');
-          showSuccessToast('Configuration added successfully!');
-        }
+        console.warn('No ID available for deletion');
+        return;
       }
-    } catch (error: unknown) {
-      console.error('Error adding new config:', error);
-      setError('Failed to add new configuration');
+    } catch (error) {
+      console.error('Error deleting config:', error);
+      setError('Failed to delete configuration');
     }
   };
+
+ const handleFileSelect = (file: File | null) => {
+  if (!file) return;
+  setNewConfigFile(file);
+};
+
 
   const isImageConfig = (configName: string | undefined, value: string) => {
     if (!configName) return false;
     const imageConfigs = ['app_logo', 'app_logo_white', 'icon_logo'];
     return imageConfigs.includes(configName) || configName.startsWith('Avatar') || (value && value.match(/\.(jpeg|jpg|gif|png|svg)$/i));
   };
+
+  // In ConfigForm.tsx
+
+const handleAddNewConfig = async () => {
+  try {
+    // Case 1: A new config item that includes a file (e.g., app_logo, or a new avatar_paths item)
+    if (newConfigFile) {
+      const formData = new FormData();
+      // Your backend expects both 'config_name' and 'file' in the same request
+      formData.append('config_name', newConfigName);
+      formData.append('file', newConfigFile);
+
+      // Call your single, intelligent upload endpoint
+      const response = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (response.data.status === 'success') {
+        // Since the backend handles everything, we just need to refresh the state.
+        // The easiest way is to re-fetch all configs to get the latest state.
+        // This is more robust than trying to manually update the local state.
+        window.location.reload(); // Simple and effective
+        return; // Stop execution
+      } else {
+        setError(response.data.message || 'Failed to upload file.');
+        return;
+      }
+    }
+
+    // Case 2: A new config item that is purely text-based
+    if (newConfigName && newConfigValue) {
+      // Use the endpoint for simple key-value pairs
+      const response = await api.post('/upload-configValue', {
+        config_name: newConfigName,
+        config_value: newConfigValue,
+      });
+
+      if (response.data.status === 'success') {
+        // Add the new text-based config to the local state for immediate feedback
+        setConfigs([...configs, { name: newConfigName, value: newConfigValue }]);
+        // Reset the form
+        setShowAddForm(false);
+        setNewConfigName('');
+        setNewConfigValue('');
+        setNewConfigFile(null);
+      } else {
+        setError(response.data.message || 'Failed to save configuration.');
+      }
+    } else {
+        // Handle case where user clicks save without filling out the form
+        setError("Please provide a config name and either a value or a file.");
+    }
+  } catch (error) {
+    console.error('Error adding new config:', error);
+    setError('Failed to add new configuration');
+  }
+};
 
   if (error) {
     return (
@@ -408,9 +259,11 @@ const ConfigForm = () => {
     );
   }
 
-  const regularConfigs = configs.filter(c => c.name !== 'avatar_paths' && c.name !== 'support_number');
-  const avatarPathsConfig = configs.find(c => c.name === 'avatar_paths');
+  // Group configs for rendering
+  const regularConfigs = configs.filter(c => !c.name.startsWith('Avatar') && c.name !== 'support_number');
+  const avatarConfigs = configs.filter(c => c.name.startsWith('Avatar'));
   const supportNumberConfig = configs.find(c => c.name === 'support_number');
+
 
   return (
     <>
@@ -425,6 +278,7 @@ const ConfigForm = () => {
           Add New
         </button>
       </div>
+
       {showAddForm && (
         <div className="mb-4 p-4 border border-gray-200 rounded-lg bg-white dark:border-white/[0.05] dark:bg-white/[0.03]">
           <h2 className="text-xl font-bold mb-2">Add New Configuration</h2>
@@ -435,7 +289,6 @@ const ConfigForm = () => {
               value={newConfigName}
               onChange={(e) => setNewConfigName(e.target.value)}
               className="border rounded p-2 w-full bg-transparent"
-              placeholder="e.g., app_logo, avatar_paths"
             />
           </div>
           <div className="mb-2">
@@ -448,16 +301,15 @@ const ConfigForm = () => {
             />
           </div>
           <div className="mb-2">
-            <label className="block text-gray-700 dark:text-gray-300">Or Upload Image(s)</label>
+            <label className="block text-gray-700 dark:text-gray-300">Or Upload Image</label>
             <ImageUploadCard
-              title={newConfigName === 'avatar_paths' ? "Upload Multiple Avatars" : "Upload Image"}
+              title="Upload Image"
               rules={{
                 mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'],
                 max: 200,
               }}
-              type={newConfigName === 'avatar_paths' ? "collection" : "single"}
-              onFileSelect={handleFileSelect}
-              onFilesSelect={handleFilesSelect}
+              type="single"
+              onFileSelect={(file) => setNewConfigFile(file)}
             />
           </div>
           <div className="flex justify-end gap-2 mt-4">
@@ -476,6 +328,7 @@ const ConfigForm = () => {
           </div>
         </div>
       )}
+
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/[0.05] dark:bg-white/[0.03]">
         <div className="max-w-full overflow-x-auto">
           <Table>
@@ -487,183 +340,128 @@ const ConfigForm = () => {
               </TableRow>
             </TableHeader>
             <TableBody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
+              {/* Render Regular Configs */}
               {regularConfigs.map((config, index) => (
-                <TableRow key={`${config.name}-${index}`} className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
-                  <TableCell className="px-5 py-4 text-start">
-                    <div className="cursor-pointer font-medium">{config.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</div>
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-start text-gray-500">
-                    {editingConfig?.name === config.name ? (
-                      isImageConfig(config.name, config.value) ? (
+                  <TableRow key={`${config.name}-${index}`} className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
+                    <TableCell className="px-5 py-4 text-start">
+                      <div className="cursor-pointer">{config.name}</div>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-start text-gray-500">
+                      {editingConfig?.name === config.name ? (
+                        isImageConfig(config.name, config.value) ? (
+                          <div>
+                            <img
+                              src={config.value}
+                              alt="Preview"
+                              className="max-w-[200px] max-h-[200px] object-contain mb-2"
+                            />
+                            <ImageUploadCard
+                                title={`Update ${editingConfig.name}`}
+                                rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 200 }}
+                                type="single"
+                                onFileSelect={handleFileSelect}
+                            />
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={handleTextInputChange}
+                            className="border rounded p-1 w-full bg-transparent"
+                          />
+                        )
+                      ) : (
                         <div>
-                          <img
-                            src={config.value}
-                            alt="Preview"
-                            className="max-w-[200px] max-h-[200px] object-contain mb-2 rounded"
-                          />
+                          {isImageConfig(config.name, config.value) ? (
+                            <img src={config.value} alt="Preview" className="max-w-[200px] max-h-[200px] object-contain" />
+                          ) : (
+                            <span className="break-words">{config.value}</span>
+                          )}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-start text-gray-500">
+                       {/* Action Buttons */}
+                       <div className="flex gap-2">
+                        {editingConfig?.name === config.name ? (
+                          <>
+                            <button onClick={handleSave} className="p-1 text-green-600 hover:bg-green-50 rounded"><Save size={16} /></button>
+                            <button onClick={() => setEditingConfig(null)} className="p-1 text-red-600 hover:bg-red-50 rounded"><X size={16} /></button>
+                          </>
+                        ) : (
+                          <button onClick={() => handleEdit(config)} className="p-1 text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={16} /></button>
+                        )}
+                        <button onClick={() => window.confirm('Are you sure?') && handleDelete(config)} className="p-1 text-red-600 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+              ))}
+
+              {/* Render Avatar Configs */}
+              {avatarConfigs.map((config) => (
+                  <TableRow key={`${config.name}-${config.avatarId}`} className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
+                     <TableCell className="px-5 py-4 text-start">
+                      <div className="cursor-pointer">{config.name}</div>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-start text-gray-500">
+                      {editingConfig?.avatarId === config.avatarId ? (
+                        <div>
+                          <img src={config.value} alt={config.name} className="w-12 h-12 object-cover rounded-full mb-2" />
                           <ImageUploadCard
-                            title={`Update ${editingConfig.name}`}
-                            rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 200 }}
-                            type="single"
-                            onFileSelect={handleSingleFileUpdate}
-                          />
+                              title={`Update ${config.name}`}
+                              rules={{ mimes: ['image/svg+xml'], max: 200 }}
+                              type="single"
+                              onFileSelect={handleFileSelect}
+                           />
                         </div>
                       ) : (
-                        <input
-                          type="text"
-                          value={editingConfig.value}
-                          onChange={(e) => {
-                            setEditingConfig({ ...editingConfig, value: e.target.value });
-                          }}
-                          className="border rounded p-2 w-full bg-transparent"
-                        />
-                      )
-                    ) : (
-                      <div>
-                        {isImageConfig(config.name, config.value) ? (
-                          <img src={config.value} alt="Preview" className="max-w-[200px] max-h-[200px] object-contain rounded" />
-                        ) : (
-                          <span className="break-words">{config.value}</span>
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-start text-gray-500">
-                    <div className="flex gap-2">
-                      {editingConfig?.name === config.name ? (
-                        <>
-                          {!isImageConfig(config.name, config.value) && (
-                            <button onClick={() => handleSave()} className="p-1 text-green-600 hover:bg-green-50 rounded"><Save size={16} /></button>
-                          )}
-                          <button onClick={handleCancelEdit} className="p-1 text-red-600 hover:bg-red-50 rounded"><X size={16} /></button>
-                        </>
-                      ) : (
-                        <button onClick={() => handleEdit(config)} className="p-1 text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={16} /></button>
+                        <img src={config.value} alt={config.name} className="w-12 h-12 object-cover rounded-full" />
                       )}
-                      <button onClick={() => handleDelete(config)} className="p-1 text-red-600 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
-                    </div>
-                  </TableCell>
-                </TableRow>
+                    </TableCell>
+                     <TableCell className="px-4 py-3 text-start text-gray-500">
+                        {/* Action Buttons */}
+                        <div className="flex gap-2">
+                          {editingConfig?.avatarId === config.avatarId ? (
+                            <>
+                              <button onClick={handleSave} className="p-1 text-green-600 hover:bg-green-50 rounded"><Save size={16} /></button>
+                              <button onClick={() => setEditingConfig(null)} className="p-1 text-red-600 hover:bg-red-50 rounded"><X size={16} /></button>
+                            </>
+                          ) : (
+                            <button onClick={() => handleEdit(config)} className="p-1 text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={16} /></button>
+                          )}
+                          <button onClick={() => window.confirm('Are you sure?') && handleDelete(config)} className="p-1 text-red-600 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
+                        </div>
+                    </TableCell>
+                  </TableRow>
               ))}
               
-              {/* Avatar Paths Section */}
-              {avatarPathsConfig && (
-                <TableRow className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
-                  <TableCell className="px-5 py-4 text-start">
-                    <div className="cursor-pointer font-medium">Avatar Paths</div>
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-start text-gray-500">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 py-2">
-                      {avatarPaths.map((avatar) => (
-                        <div key={avatar.id} className="relative group">
-                          <div className="aspect-square rounded-lg overflow-hidden border-2 border-gray-200 hover:border-blue-300 transition-colors">
-                            <img 
-                              src={avatar.url} 
-                              alt={avatar.name} 
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          <div className="text-xs text-center mt-1 text-gray-500">
-                            {avatar.name}
-                          </div>
-                          {editingAvatarId === avatar.id ? (
-                            <div className="absolute inset-0 bg-white/90 rounded-lg flex flex-col items-center justify-center p-2">
-                              <ImageUploadCard
-                                title=""
-                                rules={{ mimes: ['image/svg+xml', 'image/png', 'image/jpg', 'image/jpeg'], max: 200 }}
-                                type="single"
-                                onFileSelect={(file) => handleAvatarUpdate(file, avatar)}
-                              />
-                              <button 
-                                onClick={() => setEditingAvatarId(null)}
-                                className="mt-2 p-1 text-red-600 hover:bg-red-50 rounded"
-                              >
-                                <X size={12} />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                              <button 
-                                onClick={() => handleAvatarEdit(avatar.id)}
-                                className="p-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs"
-                              >
-                                <Edit2 size={12} />
-                              </button>
-                              <button 
-                                onClick={() => handleDeleteAvatar(avatar)}
-                                className="p-1 bg-red-600 text-white rounded hover:bg-red-700 text-xs"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    {avatarPaths.length === 0 && (
-                      <div className="text-gray-400 italic">No avatars uploaded yet</div>
-                    )}
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-start text-gray-500">
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => {
-                          setNewConfigName('avatar_paths');
-                          setShowAddForm(true);
-                        }}
-                        className="p-1 text-green-600 hover:bg-green-50 rounded"
-                        title="Add more avatars"
-                      >
-                        <Upload size={16} />
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
-              
-              {/* Support Numbers Section */}
+              {/* Render Support Number Config */}
               {supportNumberConfig && (
                 <TableRow className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
-                  <TableCell className="px-5 py-4 text-start">
-                    <div className="cursor-pointer font-medium">Support Numbers</div>
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-start text-gray-500">
-                    {editingConfig?.name === supportNumberConfig.name ? (
-                      <div className="space-y-2">
-                        {supportNumbers.map((number) => (
-                          <div key={number.id} className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={number.value}
-                              onChange={handleTextInputChange(number.id)}
-                              className="border rounded p-2 flex-1 bg-transparent"
-                            />
-                            <button onClick={() => handleSave(number.id)} className="p-1 text-green-600 hover:bg-green-50 rounded">
-                              <Save size={16} />
-                            </button>
-                            <button onClick={() => handleDeleteNumber(number.id)} className="p-1 text-red-600 hover:bg-red-50 rounded">
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="break-words">{supportNumberConfig.value}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-start text-gray-500">
-                    <div className="flex gap-2">
-                      {editingConfig?.name === supportNumberConfig.name ? (
-                        <button onClick={handleCancelEdit} className="p-1 text-red-600 hover:bg-red-50 rounded">
-                          <X size={16} />
-                        </button>
-                      ) : (
-                        <button onClick={() => handleEdit(supportNumberConfig)} className="p-1 text-blue-600 hover:bg-blue-50 rounded">
-                          <Edit2 size={16} />
-                        </button>
-                      )}
-                    </div>
-                  </TableCell>
+                     <TableCell className="px-5 py-4 text-start">
+                      <div className="cursor-pointer">{supportNumberConfig.name}</div>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-start text-gray-500">
+                       {editingConfig?.name === supportNumberConfig.name ? (
+                          <input type="text" value={editValue} onChange={handleTextInputChange} className="border rounded p-1 w-full bg-transparent" />
+                        ) : (
+                          <span className="break-words">{supportNumberConfig.value}</span>
+                        )}
+                    </TableCell>
+                     <TableCell className="px-4 py-3 text-start text-gray-500">
+                       {/* Action Buttons */}
+                       <div className="flex gap-2">
+                          {editingConfig?.name === supportNumberConfig.name ? (
+                            <>
+                              <button onClick={handleSave} className="p-1 text-green-600 hover:bg-green-50 rounded"><Save size={16} /></button>
+                              <button onClick={() => setEditingConfig(null)} className="p-1 text-red-600 hover:bg-red-50 rounded"><X size={16} /></button>
+                            </>
+                          ) : (
+                            <button onClick={() => handleEdit(supportNumberConfig)} className="p-1 text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={16} /></button>
+                          )}
+                          <button onClick={() => window.confirm('Are you sure?') && handleDelete(supportNumberConfig)} className="p-1 text-red-600 hover:bg-red-50 rounded"><Trash2 size={16} /></button>
+                        </div>
+                    </TableCell>
                 </TableRow>
               )}
             </TableBody>
