@@ -23,6 +23,8 @@ import AppLayout from "./layout/AppLayout";
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import Home from "./pages/Dashboard/Home";
 import TicketTable from "./pages/Tables/TicketTable";
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 export default function App() {
   return (
@@ -71,6 +73,20 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Router>
+          {/* ✅ ToastContainer added here */}
+      <ToastContainer
+        position="top-center"
+        autoClose={5000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="light" // or "dark"
+        
+      />
     </>
   );
 }
