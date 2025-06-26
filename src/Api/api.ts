@@ -2,7 +2,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://support.amazons.co.ke/api/support/config',
+  baseURL: 'https://support.amazons.co.ke/api/support/',
 });
 
 export default api;

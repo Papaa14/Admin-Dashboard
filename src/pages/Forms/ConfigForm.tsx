@@ -8,7 +8,7 @@ import { Edit2, Trash2, Save, X, Upload, Plus, ChevronLeft, ChevronRight, Loader
 import { showSuccessToast, showErrorToast, confirmDelete } from '../../components/ui/alert/ToastMessages';
 
 
-// --- INTERFACES TO MATCH THE NEW API STRUCTURE ---
+// --- INTERFACES TO MATCH THE PAGINATED API STRUCTURE ---
 interface Config {
   id?: number;
   name: string;
@@ -34,6 +34,9 @@ interface Pagination {
   prev_page_url: string | null;
 }
 
+// ConfigData represents the structure of configuration data returned by the API,
+// where each key corresponds to a config name and its value can be a string, 
+// an object with optional path/url/id, an array of support numbers, or a generic object.
 interface ConfigData {
   [key: string]: {
     path?: string;
@@ -75,7 +78,7 @@ const ConfigForm = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [nextPageUrl, setNextPageUrl] = useState<string | null>(null);
   const [prevPageUrl, setPrevPageUrl] = useState<string | null>(null);
-  const [currentFetchUrl, setCurrentFetchUrl] = useState('/all');
+  const [currentFetchUrl, setCurrentFetchUrl] = useState('/config/all');
 
   // --- DATA FETCHING ---
   const fetchConfigs = useCallback(async (url: string) => {
@@ -142,7 +145,7 @@ const ConfigForm = () => {
   }, []);
 
   useEffect(() => {
-    fetchConfigs('/all');
+    fetchConfigs('/config/all');
   }, [fetchConfigs]);
 
   // --- HANDLER FUNCTIONS ---
@@ -160,7 +163,7 @@ const ConfigForm = () => {
         config_name: editingConfig.name,
         config_value: id ? supportNumbers.find(n => n.id === id)?.value : editingConfig.value,
       };
-      const response = await api.put(`/update/${editingConfig.name}`, payload);
+      const response = await api.put(`/config/update/${editingConfig.name}`, payload);
       if (response.data.status === 'success') {
         showSuccessToast(response.data.message || 'Configuration updated successfully');
         fetchConfigs(currentFetchUrl);
@@ -177,7 +180,7 @@ const ConfigForm = () => {
     formData.append('config_name', editingConfig.name);
     formData.append('file', file);
     try {
-      const response = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const response = await api.post('/config/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       if (response.data.status === 'success') {
         showSuccessToast('Image updated successfully!');
         fetchConfigs(currentFetchUrl);
@@ -194,7 +197,7 @@ const ConfigForm = () => {
     formData.append('file', file);
     formData.append('avatar_id', avatar.originalId);
     try {
-      const response = await api.post(`/avatar-update/${avatar.originalId}`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const response = await api.post(`/config/avatar-update/${avatar.originalId}`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       if (response.data.status === 'success') {
         showSuccessToast(`Avatar updated successfully!`);
         fetchConfigs(currentFetchUrl);
@@ -208,7 +211,7 @@ const ConfigForm = () => {
   const handleDelete = async (config: Config) => {
     await confirmDelete(config.name, async () => {
       try {
-        const endpoint = config.name ? `/delete/${config.name}` : `/${config.avatarId}`;
+        const endpoint = config.name ? `/config/delete/${config.name}` : `/${config.avatarId}`;
         const response = await api.delete(endpoint);
         showSuccessToast(response.data.message || "Configuration deleted successfully");
         fetchConfigs(currentFetchUrl);
@@ -221,7 +224,7 @@ const ConfigForm = () => {
 
   const handleDeleteNumber = async (id: number) => {
     try {
-      await api.delete(`/${id}`);
+      await api.delete(`/config/${id}`);
       showSuccessToast("Support number deleted successfully.");
       fetchConfigs(currentFetchUrl);
     }catch (error: unknown) {
@@ -233,7 +236,7 @@ const ConfigForm = () => {
   const handleDeleteAvatar = async (avatar: Avatar) => {
     await confirmDelete(avatar.name, async () => {
       try {
-        const response = await api.delete(`/avatar-delete/${avatar.originalId}`);
+        const response = await api.delete(`/config/avatar-delete/${avatar.originalId}`);
         showSuccessToast(response.data.message || "Avatar deleted successfully");
         fetchConfigs(currentFetchUrl);
       } catch (error: unknown) {
@@ -250,9 +253,9 @@ const ConfigForm = () => {
         const formData = new FormData();
         formData.append('config_name', newConfigName);
         newConfigFiles.forEach(file => formData.append('file[]', file));
-        response = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        response = await api.post('/config/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       } else {
-        response = await api.post('/upload-configValue', { config_name: newConfigName, config_value: newConfigValue });
+        response = await api.post('/comfig/upload-configValue', { config_name: newConfigName, config_value: newConfigValue });
       }
 
       if (response.data.status === 'success') {
@@ -261,7 +264,7 @@ const ConfigForm = () => {
         setNewConfigValue('');
         setNewConfigFiles([]);
         showSuccessToast('Configuration added successfully!');
-        fetchConfigs('/all');
+        fetchConfigs('/config/all');
       }
     }  catch (error: unknown) {
     const message = isAxiosError(error) ? error.response?.data?.message : 'Failed to add new configuration';
@@ -280,7 +283,7 @@ const handlePageNavigation = (url: string | null) => {
       const urlObject = new URL(url);
       // Just use the search parameters with the base endpoint
       const searchParams = urlObject.search;
-      fetchConfigs(`/all${searchParams}`);
+      fetchConfigs(`/config/all${searchParams}`);
     } catch {
       console.error("Invalid pagination URL:", url);
       showErrorToast("Invalid navigation link provided by the API.");
@@ -355,9 +358,9 @@ const handlePageNavigation = (url: string | null) => {
           <Table>
             <TableHeader className="border-b border-gray-100 dark:border-white/[0.05]">
               <TableRow>
-                <TableCell className="w-1/4 px-6 py-4 font-medium text-start">Config Name</TableCell>
-                <TableCell className="w-2/4 px-6 py-4 font-medium text-start">Config Value</TableCell>
-                <TableCell className="w-1/4 px-6 py-4 font-medium text-start">Actions</TableCell>
+                <TableCell className="w-1/4 px-6 py-4 font-medium text-start dark:text-white">Config Name</TableCell>
+                <TableCell className="w-2/4 px-6 py-4 font-medium text-start dark:text-white">Config Value</TableCell>
+                <TableCell className="w-1/4 px-6 py-4 font-medium text-start dark:text-white">Actions</TableCell>
               </TableRow>
             </TableHeader>
             <TableBody className="divide-y divide-gray-100 dark:divide-white/[0.05]">

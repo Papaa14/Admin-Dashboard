@@ -1,431 +1,464 @@
-import { useState, ChangeEvent, FormEvent } from 'react';
-import { Upload, Image, ExternalLink, Calendar, Trash2, Edit3, Save, X } from 'lucide-react';
+import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
+import PageMeta from "../../components/common/PageMeta";
+import PageBreadcrumb from "../../components/common/PageBreadCrumb";
+import { Upload, Image, Trash2, Edit3, Save, X, Plus, Calendar, Link as LinkIcon, ExternalLink, Loader2, Eye, List } from 'lucide-react';
+import Slider from 'react-slick';
+import "slick-carousel/slick/slick.css";
+import "slick-carousel/slick/slick-theme.css";
+import api from '../../Api/api';
+import { showSuccessToast, showErrorToast, confirmDelete } from '../../components/ui/alert/ToastMessages';
 
-interface SupportImage {
-  id: string;
-  category: string;
-  action: number;
-  external_url: string;
-  internal_url: string;
-  display_from: string;
-  display_until: string;
-  file_url: string;
-  original_name: string;
-  user_id: string;
+// --- TYPE DEFINITIONS ---
+
+interface ImageType {
+    id: string;
+    category: string;
+    action: boolean | string;
+    external_url: string;
+    internal_url: string;
+    url?: string;
+    display_from: string;
+    display_until: string;
+    file_url: string;
+    original_name: string;
 }
 
-interface TempUpload {
-  id: string;
-  original_name: string;
-  file_url: string;
+interface ActiveImageType {
+    id: number;
+    category: string;
+    file_url: string;
+    action: boolean;
+    url: string;
 }
 
-interface FormData {
-  category: string;
-  action: string;
-  external_url: string;
-  internal_url: string;
-  display_from: string;
-  display_until: string;
-  user_id: string;
-  temp_upload_id: string;
-}
+type GroupedActiveImages = Record<string, ActiveImageType[]>;
+
+// --- HELPER FUNCTIONS ---
+
+const isAxiosError = (error: unknown): error is { response?: { data?: { message?: string } } } => {
+    return typeof error === 'object' && error !== null && 'response' in error;
+};
+
+// --- COMPONENT ---
 
 const SupportImageUI = () => {
-  const [images, setImages] = useState<SupportImage[]>([
-    {
-      id: '1',
-      category: 'Banner',
-      action: 1,
-      external_url: 'https://example.com',
-      internal_url: '',
-      display_from: '2024-01-01T10:00',
-      display_until: '2024-12-31T23:59',
-      file_url: 'https://cdn.amazons.co.ke/storage/images/uploads/684d5e4e01405_1749900878.jpeg',
-      original_name: 'sample-banner.jpg',
-      user_id: 'user123'
-    }
-  ]);
+    // --- STATE MANAGEMENT ---
+    const [viewMode, setViewMode] = useState<'active' | 'all'>('active');
+    const [images, setImages] = useState<ImageType[]>([]);
+    const [categories, setCategories] = useState<string[]>([]);
+    const [selectedCategory, setSelectedCategory] = useState('');
+    const [activeImages, setActiveImages] = useState<GroupedActiveImages>({});
+    const [isLoadingActive, setIsLoadingActive] = useState(true);
+    const [isLoadingAll, setIsLoadingAll] = useState(false);
 
-  const categories = ['Hotspot', 'Home-Fibre', 'Captive-Portal'];
+    // Form State
+    const [showForm, setShowForm] = useState(false);
+    const [editingImage, setEditingImage] = useState<ImageType | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showUrlSection, setShowUrlSection] = useState(false);
+    const [showDurationSection, setShowDurationSection] = useState(false);
 
-  const [tempUploads, setTempUploads] = useState<TempUpload[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [formData, setFormData] = useState<FormData>({
-    category: '',
-    action: '0',
-    external_url: '',
-    internal_url: '',
-    display_from: '',
-    display_until: '',
-    user_id: 'user123',
-    temp_upload_id: '',
-  });
+    const initialFormData = {
+        category: '',
+        action: '',
+        external_url: '',
+        internal_url: '',
+        display_from: '',
+        display_until: '',
+        file: null as File | null,
+    };
 
-  const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
+    const [formData, setFormData] = useState(initialFormData);
 
-  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    // --- DATA FETCHING ---
 
-    setIsUploading(true);
-    setTimeout(() => {
-      const newUpload: TempUpload = {
-        id: Date.now().toString(),
-        original_name: file.name,
-        file_url: URL.createObjectURL(file)
-      };
-      setTempUploads(prev => [...prev, newUpload]);
-      setIsUploading(false);
-    }, 2000);
-  };
+    const fetchCategories = async () => {
+        try {
+            const response = await api.get('images/categories');
+            setCategories(response.data.data);
+        } catch (error) {
+            console.error('Error fetching categories:', error);
+            showErrorToast('Could not fetch image categories.');
+        }
+    };
 
-  const handleSubmit = (e?: FormEvent) => {
-    if (e) e.preventDefault();
-    if (editingId) {
-      setImages(prev => prev.map(img =>
-        img.id === editingId
-          ? {
-              ...img,
-              category: formData.category,
-              action: parseInt(formData.action),
-              external_url: formData.external_url,
-              internal_url: formData.internal_url,
-              display_from: formData.display_from,
-              display_until: formData.display_until
+    const fetchActiveImages = async () => {
+        setIsLoadingActive(true);
+        try {
+            const response = await api.get('/images/imagesActive');
+            const imagesData: ActiveImageType[] = response.data.data || [];
+            const grouped = imagesData.reduce((acc, image) => {
+                const { category } = image;
+                if (!acc[category]) {
+                    acc[category] = [];
+                }
+                acc[category].push(image);
+                return acc;
+            }, {} as GroupedActiveImages);
+            setActiveImages(grouped);
+        } catch (error) {
+            console.error('Error fetching active images:', error);
+            setActiveImages({});
+        } finally {
+            setIsLoadingActive(false);
+        }
+    };
+
+    const fetchAllImagesForCategory = async (category: string) => {
+        if (category) {
+            setIsLoadingAll(true);
+            try {
+                const response = await api.get(`images?category=${category}`);
+                setImages(response.data.data.data || response.data.data || []);
+            } catch (error) {
+                console.error(`Error fetching images for category ${category}:`, error);
+                setImages([]);
+                showErrorToast(`Failed to fetch images for ${category}.`);
+            } finally {
+                setIsLoadingAll(false);
             }
-          : img
-      ));
-      setEditingId(null);
-    } else {
-      const selectedUpload = tempUploads.find(upload => upload.id === formData.temp_upload_id);
-      if (selectedUpload) {
-        const newImage: SupportImage = {
-          id: Date.now().toString(),
-          category: formData.category,
-          action: parseInt(formData.action),
-          external_url: formData.external_url,
-          internal_url: formData.internal_url,
-          display_from: formData.display_from,
-          display_until: formData.display_until,
-          file_url: selectedUpload.file_url,
-          original_name: selectedUpload.original_name,
-          user_id: formData.user_id
-        };
-        setImages(prev => [...prev, newImage]);
-        setTempUploads(prev => prev.filter(upload => upload.id !== formData.temp_upload_id));
-      }
-    }
-    setFormData({
-      category: '',
-      action: '0',
-      external_url: '',
-      internal_url: '',
-      display_from: '',
-      display_until: '',
-      user_id: 'user123',
-      temp_upload_id: '',
-    });
-  };
+        } else {
+            setImages([]);
+        }
+    };
 
-  const handleEdit = (image: SupportImage) => {
-    setFormData({
-      category: image.category,
-      action: image.action.toString(),
-      external_url: image.external_url,
-      internal_url: image.internal_url,
-      display_from: image.display_from,
-      display_until: image.display_until,
-      user_id: image.user_id,
-      temp_upload_id: '',
-    });
-    setEditingId(image.id);
-    document.querySelector('form')?.scrollIntoView({ behavior: 'smooth' });
-  };
+    useEffect(() => {
+        fetchCategories();
+        fetchActiveImages();
+    }, []);
 
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this image?')) {
-      setImages(prev => prev.filter(img => img.id !== id));
-    }
-  };
+    useEffect(() => {
+        fetchAllImagesForCategory(selectedCategory);
+    }, [selectedCategory]);
 
-  const handleCancel = () => {
-    setEditingId(null);
-    setFormData({
-      category: '',
-      action: '0',
-      external_url: '',
-      internal_url: '',
-      display_from: '',
-      display_until: '',
-      user_id: 'user123',
-      temp_upload_id: '',
-    });
-  };
+    const refreshAllData = async () => {
+        await fetchActiveImages();
+        if (selectedCategory) {
+            await fetchAllImagesForCategory(selectedCategory);
+        }
+    };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <div className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-slate-800 mb-2">Support Images</h1>
-          <p className="text-slate-600">Manage your support images and their display settings</p>
-        </div>
+    // --- FORM & CRUD HANDLERS ---
 
-        <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden mb-8">
-          <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-4">
-            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-              {editingId ? <Edit3 size={20} /> : <Upload size={20} />}
-              {editingId ? 'Edit Image' : 'Upload New Image'}
-            </h2>
-          </div>
-          <form onSubmit={handleSubmit} className="p-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">Category</label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                  required
-                >
-                  <option value="">Select a category</option>
-                  {categories.map((category) => (
-                    <option key={category} value={category}>{category}</option>
-                  ))}
-                </select>
-              </div>
+    const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">Link Type</label>
-                <select
-                  name="action"
-                  value={formData.action}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                  required
-                >
-                  <option value="0">Internal Link</option>
-                  <option value="1">External Link</option>
-                </select>
-              </div>
-            </div>
+    const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            setFormData(prev => ({ ...prev, file: e.target.files![0] }));
+        }
+    };
 
-            {formData.action === '1' && (
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <ExternalLink size={16} />
-                  External URL
-                </label>
-                <input
-                  type="url"
-                  name="external_url"
-                  value={formData.external_url}
-                  onChange={handleInputChange}
-                  placeholder="https://example.com"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                />
-              </div>
-            )}
+    const resetForm = () => {
+        setFormData(initialFormData);
+        setEditingImage(null);
+        setShowForm(false);
+        setShowUrlSection(false);
+        setShowDurationSection(false);
+        setIsSubmitting(false);
+    };
 
-            {formData.action === '0' && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">Internal URL</label>
-                <input
-                  type="text"
-                  name="internal_url"
-                  value={formData.internal_url}
-                  onChange={handleInputChange}
-                  placeholder="/dashboard/page"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                />
-              </div>
-            )}
+    const handleEdit = (image: ImageType) => {
+        setEditingImage(image);
+        setFormData({
+            ...initialFormData,
+            ...image,
+            action: image.action ? String(image.action) : '',
+            internal_url: image.internal_url || (image.url?.startsWith('/') ? image.url : '') || '',
+            external_url: image.external_url || (image.url?.startsWith('http') ? image.url : '') || '',
+            display_from: image.display_from ? new Date(image.display_from).toISOString().slice(0, 16) : '',
+            display_until: image.display_until ? new Date(image.display_until).toISOString().slice(0, 16) : '',
+            file: null,
+        });
+        setShowForm(true);
+        setShowUrlSection(!!(image.action || image.url || image.internal_url || image.external_url));
+        setShowDurationSection(!!(image.display_from || image.display_until));
+        
+        setTimeout(() => {
+            const formElement = document.getElementById('image-form');
+            if (formElement) {
+                formElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }, 100);
+    };
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <Calendar size={16} />
-                  Display From
-                </label>
-                <input
-                  type="datetime-local"
-                  name="display_from"
-                  value={formData.display_from}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                />
-              </div>
+    const handleDelete = async (id: string, name: string) => {
+        await confirmDelete(`image "${name}"`, async () => {
+            try {
+                const response = await api.delete(`images/${id}`);
+                showSuccessToast(response.data.message || 'Image deleted successfully!');
+                await refreshAllData();
+            } catch (error) {
+                const message = isAxiosError(error) ? error.response?.data?.message : 'Failed to delete image.';
+                showErrorToast(message || 'An error occurred.');
+            }
+        });
+    };
 
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <Calendar size={16} />
-                  Display Until
-                </label>
-                <input
-                  type="datetime-local"
-                  name="display_until"
-                  value={formData.display_until}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                />
-              </div>
-            </div>
+    const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        setIsSubmitting(true);
 
-            {!editingId && (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <Upload size={16} />
-                    Upload Image
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="file"
-                      onChange={handleFileUpload}
-                      accept="image/jpeg,image/png,image/jpg"
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                      disabled={isUploading}
-                    />
-                    {isUploading && (
-                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                      </div>
-                    )}
-                  </div>
-                </div>
+        const submissionData = new FormData();
+        const dataToSubmit = { ...formData };
 
-                {tempUploads.length > 0 && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Select Uploaded Image</label>
-                    <select
-                      name="temp_upload_id"
-                      value={formData.temp_upload_id}
-                      onChange={handleInputChange}
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                      required
+        if (!showUrlSection) {
+            dataToSubmit.action = '';
+            dataToSubmit.external_url = '';
+            dataToSubmit.internal_url = '';
+        }
+        if (!showDurationSection) {
+            dataToSubmit.display_from = '';
+            dataToSubmit.display_until = '';
+        }
+
+        Object.entries(dataToSubmit).forEach(([key, value]) => {
+            if (value !== null) {
+                submissionData.append(key, value as string | Blob);
+            }
+        });
+
+        try {
+            const url = editingImage ? `images/${editingImage.id}` : 'images';
+            const response = await api.post(url, submissionData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            const successMessage = editingImage ? 'Image updated successfully!' : 'Image added successfully!';
+            showSuccessToast(response.data.message || successMessage);
+            resetForm();
+            await refreshAllData();
+        } catch (error) {
+            const message = isAxiosError(error) ? error.response?.data?.message : 'Submission failed.';
+            showErrorToast(message || 'An error occurred during submission.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const sliderSettings = {
+        dots:false,
+        infinite: true,
+        speed: 300,
+        slidesToShow: 1,
+        slidesToScroll: 1,
+        autoplay: true,
+        autoplaySpeed: 2000,
+    };
+
+    // --- RENDER ---
+    return (
+        <div className="min-h-screen bg-slate-50 dark:bg-gray-900 ">
+            <PageMeta title="Support Images" description="Manage and configure support images." />
+            <PageBreadcrumb pageTitle="Support Images" />
+            <div className="container mx-auto px-4 py-8">
+
+                <div className="mb-8 flex justify-between items-center">
+                    <div>
+                        <h1 className="text-4xl font-bold text-slate-800 dark:text-slate-100 mb-2">Support Images</h1>
+                        <p className="text-slate-600 dark:text-slate-400">Add, edit, and manage all support images.</p>
+                    </div>
+                    <button
+                        onClick={() => { setShowForm(!showForm); if (showForm) resetForm(); }}
+                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                     >
-                      <option value="">Select an uploaded image</option>
-                      {tempUploads.map((upload) => (
-                        <option key={upload.id} value={upload.id}>{upload.original_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="flex gap-4 pt-4">
-              <button
-                type="button"
-                onClick={handleSubmit}
-                className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl"
-              >
-                <Save size={16} />
-                {editingId ? 'Update Image' : 'Save Image'}
-              </button>
-              {editingId && (
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className="flex items-center gap-2 px-6 py-3 bg-slate-500 text-white font-medium rounded-lg hover:bg-slate-600 transition-all duration-200"
-                >
-                  <X size={16} />
-                  Cancel
-                </button>
-              )}
-            </div>
-          </form>
-        </div>
-
-        <div className="space-y-6">
-          <h3 className="text-2xl font-semibold text-slate-800">Existing Images</h3>
-          {images.length === 0 ? (
-            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-12 text-center">
-              <Image size={48} className="mx-auto text-slate-400 mb-4" />
-              <p className="text-slate-500 text-lg">No images uploaded yet</p>
-              <p className="text-slate-400">Upload your first image to get started</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {images.map((image) => (
-                <div key={image.id} className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden hover:shadow-2xl transition-all duration-300">
-                  <div className="aspect-video bg-slate-100 relative overflow-hidden">
-                    <img
-                      src={image.file_url}
-                      alt={image.original_name}
-                      className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                    />
-                    <div className="absolute top-4 left-4">
-                      <span className="px-3 py-1 bg-black/70 text-white text-sm rounded-full backdrop-blur-sm">
-                        {image.category}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-semibold text-slate-800 truncate">{image.original_name}</h4>
-                      <div className="flex items-center gap-1">
-                        {image.action === 1 ? (
-                          <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">External</span>
-                        ) : (
-                          <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">Internal</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="space-y-2 text-sm text-slate-600">
-                      <div className="flex items-center gap-2">
-                        {image.action === 1 ? <ExternalLink size={14} /> : <div className="w-3.5 h-3.5 bg-blue-500 rounded-full"></div>}
-                        <span className="truncate">
-                          {image.action === 1 ? image.external_url : image.internal_url}
-                        </span>
-                      </div>
-                      {image.display_from && (
-                        <div className="flex items-center gap-2">
-                          <Calendar size={14} />
-                          <span>
-                            From: {new Date(image.display_from).toLocaleDateString()}
-                          </span>
-                        </div>
-                      )}
-                      {image.display_until && (
-                        <div className="flex items-center gap-2">
-                          <Calendar size={14} />
-                          <span>
-                            Until: {new Date(image.display_until).toLocaleDateString()}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex gap-3 pt-2">
-                      <button
-                        onClick={() => handleEdit(image)}
-                        className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-all duration-200 text-sm"
-                      >
-                        <Edit3 size={14} />
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(image.id)}
-                        className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg transition-all duration-200 text-sm"
-                      >
-                        <Trash2 size={14} />
-                        Delete
-                      </button>
-                    </div>
-                  </div>
+                        {showForm ? <X size={18} /> : <Plus size={18} />}
+                        {showForm ? 'Close Form' : (editingImage ? 'Edit Image' : 'Add New Image')}
+                    </button>
                 </div>
-              ))}
+
+                {showForm && (
+                    <div id="image-form" className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-slate-200 dark:border-gray-700 overflow-hidden mb-12 transition-all duration-500">
+                        <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-4 flex justify-between items-center">
+                            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                                <Upload size={20} />
+                                {editingImage ? `Editing: ${editingImage.original_name}` : 'Upload New Image'}
+                            </h2>
+                            <button onClick={resetForm} className="text-white hover:text-purple-200 transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleSubmit} className="p-8 space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="col-span-1 md:col-span-2">
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Image File</label>
+                                    <input type="file" onChange={handleFileChange} className="w-full text-sm text-slate-500 dark:text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-blue-900/50 dark:file:text-blue-300 dark:hover:file:bg-blue-800/60" />
+                                    {editingImage && <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Leave blank to keep the current image.</p>}
+                                </div>
+                                <div>
+                                    <label htmlFor="category" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Category</label>
+                                    <input type="text" id="category" name="category" value={formData.category} onChange={handleInputChange} required className="w-full px-4 py-2 bg-white dark:bg-gray-700 border border-slate-300 dark:border-gray-600 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+                                </div>
+                                <div className="flex items-center space-x-4 self-end">
+                                    <div className="flex items-center">
+                                        <input type="checkbox" id="showUrlSection" checked={showUrlSection} onChange={() => setShowUrlSection(!showUrlSection)} className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-gray-600 dark:bg-gray-700 rounded" />
+                                        <label htmlFor="showUrlSection" className="ml-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Add Action URL</label>
+                                    </div>
+                                    <div className="flex items-center">
+                                        <input type="checkbox" id="showDurationSection" checked={showDurationSection} onChange={() => setShowDurationSection(!showDurationSection)} className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-gray-600 dark:bg-gray-700 rounded" />
+                                        <label htmlFor="showDurationSection" className="ml-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Set Display Duration</label>
+                                    </div>
+                                </div>
+                                {showUrlSection && (
+                                    <div className="col-span-1 md:col-span-2 bg-slate-50 dark:bg-gray-700/50 p-4 rounded-lg space-y-4 border dark:border-gray-600">
+                                        <div>
+                                            <label htmlFor="action" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Action Type</label>
+                                            <input type="text" id="action" name="action" value={formData.action} onChange={handleInputChange} placeholder="e.g., 'open_url', 'navigate'" className="w-full px-4 py-2 bg-white dark:bg-gray-700 border border-slate-300 dark:border-gray-600 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+                                        </div>
+                                        <div>
+                                            <label htmlFor="internal_url" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Internal URL</label>
+                                            <div className="relative">
+                                                <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={16} />
+                                                <input type="text" id="internal_url" name="internal_url" value={formData.internal_url} onChange={handleInputChange} placeholder="/path/to/page" className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-slate-300 dark:border-gray-600 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label htmlFor="external_url" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">External URL</label>
+                                            <div className="relative">
+                                                <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={16} />
+                                                <input type="text" id="external_url" name="external_url" value={formData.external_url} onChange={handleInputChange} placeholder="https://example.com" className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-slate-300 dark:border-gray-600 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                {showDurationSection && (
+                                    <div className="col-span-1 md:col-span-2 bg-slate-50 dark:bg-gray-700/50 p-4 rounded-lg grid grid-cols-1 md:grid-cols-2 gap-6 border dark:border-gray-600">
+                                        <div>
+                                            <label htmlFor="display_from" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Display From</label>
+                                            <input type="datetime-local" id="display_from" name="display_from" value={formData.display_from} onChange={handleInputChange} className="w-full px-4 py-2 bg-white dark:bg-gray-700 border border-slate-300 dark:border-gray-600 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+                                        </div>
+                                        <div>
+                                            <label htmlFor="display_until" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Display Until</label>
+                                            <input type="datetime-local" id="display_until" name="display_until" value={formData.display_until} onChange={handleInputChange} className="w-full px-4 py-2 bg-white dark:bg-gray-700 border border-slate-300 dark:border-gray-600 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex justify-end gap-4 pt-4">
+                                <button type="button" onClick={resetForm} className="px-6 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200 dark:bg-gray-600 dark:text-slate-200 dark:hover:bg-gray-500 transition-all duration-200">Cancel</button>
+                                <button type="submit" disabled={isSubmitting} className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed">
+                                    {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                                    {editingImage ? 'Update Image' : 'Save Image'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                )}
+                
+                <div className="flex justify-center mb-8 border border-slate-300 dark:border-gray-700 rounded-full p-1 bg-slate-100 dark:bg-gray-800 w-fit mx-auto shadow-sm">
+                    <button onClick={() => setViewMode('active')} className={`flex items-center gap-2 px-6 py-2 rounded-full text-sm font-semibold transition-all duration-300 ${viewMode === 'active' ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-gray-700'}`}>
+                        <Eye size={16}/> Active Images
+                    </button>
+                    <button onClick={() => setViewMode('all')} className={`flex items-center gap-2 px-6 py-2 rounded-full text-sm font-semibold transition-all duration-300 ${viewMode === 'all' ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-gray-700'}`}>
+                        <List size={16} /> All Images (Manage)
+                    </button>
+                </div>
+                
+                {viewMode === 'active' && (
+                    <div className="animate-fade-in">
+                        <div className="mb-8 text-center">
+                            <h2 className="text-3xl font-bold text-slate-800 dark:text-slate-100">Active Images Preview</h2>
+                            <p className="text-slate-600 dark:text-slate-400 mt-2">This is what users currently see, grouped by category.</p>
+                        </div>
+                        {isLoadingActive ? (
+                            <div className="text-center p-8 flex items-center justify-center gap-3 text-slate-600 dark:text-slate-400"><Loader2 className="animate-spin" size={24} /><span>Loading Active Images...</span></div>
+                        ) : Object.keys(activeImages).length > 0 ? (
+                            <div className="space-y-12">
+                                {Object.entries(activeImages).map(([category, images]) => (
+                                    <div key={category} className="bg-white dark:bg-gray-800 rounded-2xl  border-slate-200 dark:border-gray-700 p-2">
+                                        <h3 className="text-2xl font-semibold text-slate-700 dark:text-slate-200 mb-4 capitalize">{category}</h3>
+                                        <div className="w-full max-w-4xl mx-auto">
+                                            <Slider {...sliderSettings}>
+                                                {images.map((image) => (
+                                                    <div key={image.id} className="px-2">
+                                                        <div className="relative group rounded-lg overflow-hidden shadow-md aspect-video">
+                                                            <img src={image.file_url} alt={`Active image for ${category}`} className="w-full h-full object-cover" />
+                                                            {image.action && (
+                                                                <a href={image.url} target="_blank" rel="noopener noreferrer" className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 cursor-pointer">
+                                                                    <span className="flex items-center gap-2 text-white font-bold bg-blue-600/80 px-4 py-2 rounded-full"><ExternalLink size={16} />Go to Link</span>
+                                                                </a>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </Slider>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-slate-200 dark:border-gray-700 p-12 text-center">
+                                <Image size={48} className="mx-auto text-slate-400 dark:text-slate-500 mb-4" />
+                                <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-200">No Active Images Found</h3>
+                                <p className="text-slate-500 dark:text-slate-400 mt-2">There are currently no images set to be active.</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {viewMode === 'all' && (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="text-center">
+                            <h3 className="text-3xl font-semibold text-slate-800 dark:text-slate-100">Manage All Images</h3>
+                            <p className="text-slate-600 dark:text-slate-400 mt-2">Select a category to view, edit, or delete its images.</p>
+                        </div>
+                        <select
+                            value={selectedCategory}
+                            onChange={(e) => setSelectedCategory(e.target.value)}
+                            className="w-full max-w-md mx-auto block px-4 py-3 border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 shadow-sm"
+                        >
+                            <option value="">-- Select a Category --</option>
+                            {categories.map((category) => (<option key={category} value={category}>{category}</option>))}
+                        </select>
+                        {isLoadingAll ? (
+                            <div className="text-center p-8 flex items-center justify-center gap-3 text-slate-600 dark:text-slate-400"><Loader2 className="animate-spin" size={24} /><span>Loading Images...</span></div>
+                        ) : selectedCategory && images.length > 0 ? (
+                            <div className="p-4 bg-white dark:bg-gray-800 rounded-2xl border-slate-200 dark:border-gray-700">
+                                <div className="w-full max-w-4xl mx-auto">
+                                    <Slider {...sliderSettings} key={selectedCategory}>
+                                        {images.map((image) => (
+                                            <div key={image.id} className="px-4 py-2">
+                                                <div className="relative group overflow-hidden rounded-xl shadow-lg">
+                                                    <img src={image.file_url} alt={image.original_name} className="w-full aspect-video object-cover rounded-xl transition-transform duration-300 group-hover:scale-105" />
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent"></div>
+                                                    <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button onClick={() => handleEdit(image)} className="p-3 bg-white/80 dark:bg-gray-900/70 backdrop-blur-sm text-slate-800 dark:text-slate-200 rounded-full hover:bg-white dark:hover:bg-gray-800 hover:text-blue-600 transition-all duration-200 shadow-md"><Edit3 size={18} /></button>
+                                                        <button onClick={() => handleDelete(image.id, image.original_name)} className="p-3 bg-white/80 dark:bg-gray-900/70 backdrop-blur-sm text-slate-800 dark:text-slate-200 rounded-full hover:bg-white dark:hover:bg-gray-800 hover:text-red-600 transition-all duration-200 shadow-md"><Trash2 size={18} /></button>
+                                                    </div>
+                                                    <div className="absolute bottom-0 left-0 p-6 text-white w-full">
+                                                        <h4 className="text-xl font-bold drop-shadow-md">{image.original_name}</h4>
+                                                        {/* --- MODIFICATION: Details with icons now displayed on hover --- */}
+                                                        <div className="text-sm mt-2 space-y-1 text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity duration-300 translate-y-4 group-hover:translate-y-0">
+                                                            {image.display_from && <p className="flex items-center gap-2"><Calendar size={14} /> <strong>From:</strong> {new Date(image.display_from).toLocaleString()}</p>}
+                                                            {image.display_until && <p className="flex items-center gap-2"><Calendar size={14} /> <strong>Until:</strong> {new Date(image.display_until).toLocaleString()}</p>}
+                                                            {image.internal_url && <p className="flex items-center gap-2"><LinkIcon size={14} /> <strong>Internal:</strong> {image.internal_url}</p>}
+                                                            {image.external_url && <p className="flex items-center gap-2"><ExternalLink size={14} /> <strong>External:</strong> {image.external_url}</p>}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </Slider>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-slate-200 dark:border-gray-700 p-12 text-center">
+                                <Image size={48} className="mx-auto text-slate-400 dark:text-slate-500 mb-4" />
+                                <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-200">No Images to Display</h3>
+                                <p className="text-slate-500 dark:text-slate-400 mt-2">
+                                    {selectedCategory ? 'There are no images in this category.' : 'Please select a category to view images.'}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
-          )}
         </div>
-      </div>
-    </div>
-  );
+    );
 };
 
 export default SupportImageUI;
