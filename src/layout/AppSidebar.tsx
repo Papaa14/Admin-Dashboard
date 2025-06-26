@@ -1,22 +1,55 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation } from "react-router-dom";
 
-// Assume these icons are imported from an icon library
+import api from '../Api/api'; 
+
+
 import {
-  // BoxCubeIcon,
-  // CalenderIcon,
   ChevronDownIcon,
   GridIcon,
   HorizontaLDots,
   DownloadIcon,
-  //PageIcon,
-  //PieChartIcon,
-  // PlugInIcon,
   ChatIcon,
-  //  UserCircleIcon,
 } from "../icons";
 import { useSidebar } from "../context/SidebarContext";
-//import SidebarWidget from "./SidebarWidget";
+
+// --- TYPE DEFINITIONS ---
+interface LogoConfig {
+  url?: string;
+}
+
+interface ConfigData {
+  app_logo?: LogoConfig;
+  app_logo_white?: LogoConfig;
+  icon_logo?: string;
+}
+
+interface PaginationData {
+  next_page_url: string | null;
+}
+
+interface ApiResponseData {
+  data: ConfigData;
+  pagination: PaginationData;
+}
+
+interface ApiResponse {
+  data: ApiResponseData;
+}
+
+interface AxiosErrorResponse {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+// --- END: TYPE DEFINITIONS ---
+
+// This function checks if an unknown error is a structured Axios error
+const isAxiosError = (error: unknown): error is AxiosErrorResponse => {
+  return typeof error === 'object' && error !== null && 'response' in error;
+};
 
 type NavItem = {
   name: string;
@@ -26,82 +59,38 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  {
-    icon: <GridIcon />,
-    name: "Dashboard",
-    subItems: [{ name: "Ecommerce", path: "/", pro: false }],
-  },
-  // {
-  //   icon: <CalenderIcon />,
-  //   name: "Calendar",
-  //   path: "/calendar",
-  // },
-  // {
-  //   icon: <UserCircleIcon />,
-  //   name: "User Profile",
-  //   path: "/profile",
-  // },
-  {
-    icon: <DownloadIcon />,
-    name: "Uploads",
-
-    subItems: [{ name: "View Configs", path: "/config-form", pro: false },
-    { name: "Add new slider Images", path: "/addImages", pro: false },
-    { name: "Add new Faqs", path: "/addFaq", pro: false },
-      // { name: "Form Elements", path: "/form-elements", pro: false }
-    ],
-  },
-  {
-    name: "Tickets",
-    icon: <ChatIcon />,
-    subItems: [{ name: "Tickets", path: "/tickets", pro: false }
-      // { name: "Basic Tables", path: "/basic-tables", pro: false },
-    ],
-  },
-  // {
-  //   name: "Pages",
-  //   icon: <PageIcon />,
-  //   subItems: [
-  //     { name: "Blank Page", path: "/blank", pro: false },
-  //     { name: "404 Error", path: "/error-404", pro: false },
-  //   ],
-  // },
-];
-
-// const othersItems: NavItem[] = [
-//   {
-//     icon: <PieChartIcon />,
-//     name: "Charts",
-//     subItems: [
-//       { name: "Line Chart", path: "/line-chart", pro: false },
-//       { name: "Bar Chart", path: "/bar-chart", pro: false },
-//     ],
-//   },
-//   {
-//     icon: <BoxCubeIcon />,
-//     name: "UI Elements",
-//     subItems: [
-//       { name: "Alerts", path: "/alerts", pro: false },
-//       { name: "Avatar", path: "/avatars", pro: false },
-//       { name: "Badge", path: "/badge", pro: false },
-//       { name: "Buttons", path: "/buttons", pro: false },
-//       { name: "Images", path: "/images", pro: false },
-//       { name: "Videos", path: "/videos", pro: false },
-//     ],
-//   },
-//   {
-//     icon: <PlugInIcon />,
-//     name: "Authentication",
-//     subItems: [
-//       { name: "Sign In", path: "/signin", pro: false },
-//       { name: "Sign Up", path: "/signup", pro: false },
-//     ],
-//   },
-// ];
+    {
+      icon: <GridIcon />,
+      name: "Dashboard",
+      subItems: [{ name: "Ecommerce", path: "/", pro: false }],
+    },
+    {
+      icon: <DownloadIcon />,
+      name: "Uploads",
+      subItems: [{ name: "View Configs", path: "/config-form", pro: false },
+      { name: "Add new slider Images", path: "/addImages", pro: false },
+      { name: "Add new Faqs", path: "/addFaq", pro: false },
+      ],
+    },
+    {
+      name: "Tickets",
+      icon: <ChatIcon />,
+      subItems: [{ name: "Tickets", path: "/tickets", pro: false }
+      ],
+    },
+  ];
 
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
   const location = useLocation();
+
+  const [logos, setLogos] = useState({
+    appLogo: "",
+    appLogoWhite: "",
+    iconLogo: "",
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [openSubmenu, setOpenSubmenu] = useState<{
     type: "main" | "others";
@@ -112,15 +101,72 @@ const AppSidebar: React.FC = () => {
   );
   const subMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // const isActive = (path: string) => location.pathname === path;
   const isActive = useCallback(
     (path: string) => location.pathname === path,
     [location.pathname]
   );
 
+  // --- START: MODIFICATION 3 - Use Axios client with proper typing ---
+  useEffect(() => {
+    const fetchAllConfigs = async () => {
+      const initialEndpoint = "/config/all"; 
+      const allConfigsData: ConfigData[] = [];
+      let nextUrl: string | null = initialEndpoint;
+
+      try {
+        while (nextUrl) {
+          // Use the Axios instance with proper typing
+          const response = await api.get<ApiResponse>(nextUrl);
+          const pageData: ApiResponse = response.data;
+
+          if (pageData.data && pageData.data.data) {
+             allConfigsData.push(pageData.data.data);
+          }
+                 const nextFullUrl = pageData.data.pagination.next_page_url;
+
+        if (nextFullUrl) {         
+         const baseUrlString = api.defaults.baseURL || '';
+
+          
+          const relativePath = nextFullUrl
+              .replace(baseUrlString.replace('https', 'http'), '')
+              .replace(baseUrlString, '');
+
+            nextUrl = relativePath;
+        }else{
+          nextUrl = null; // No more pages to fetch
+        }
+      }
+
+        const finalConfig = Object.assign({}, ...allConfigsData);
+
+        setLogos({
+          appLogo: finalConfig.app_logo?.url || "",
+          appLogoWhite: finalConfig.app_logo_white?.url || "",
+          iconLogo: finalConfig.icon_logo || "",
+        });
+
+      } catch (error: unknown) {
+        console.error("Failed to fetch app logos configuration:", error);
+
+        // Use the type guard to check the error structure
+        if (isAxiosError(error)) {
+          // Extract the specific message from the API response if it exists
+          const message = error.response?.data?.message || 'An unknown API error occurred.';
+          setError(message);
+        } else {         
+          setError('An unexpected error occurred. Please check your connection.');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAllConfigs();
+  }, []); 
+
   useEffect(() => {
     let submenuMatched = false;
-    // Only check "main" navItems since "others" is commented out
     const items = navItems;
     items.forEach((nav, index) => {
       if (nav.subItems) {
@@ -299,30 +345,52 @@ const AppSidebar: React.FC = () => {
           }`}
       >
         <Link to="/">
-          {isExpanded || isHovered || isMobileOpen ? (
+          {/* The rendering logic for skeleton/error/logos remains the same and will work perfectly */}
+          {loading ? (
+            <div
+              className={`bg-gray-200 dark:bg-gray-700 rounded animate-pulse ${
+                isExpanded || isHovered || isMobileOpen
+                  ? "w-[150px] h-[40px]"
+                  : "w-[32px] h-[32px]"
+              }`}
+            />
+          ) : error ? (
+            // Now displays the specific error from your API
+            <div className="text-red-500 text-xs text-center p-2" title={error}>
+              Load Error
+            </div>
+          ) : isExpanded || isHovered || isMobileOpen ? (
             <>
-              <img
-                className="dark:hidden"
-                src="https://cdn.amazons.co.ke/storage/images/uploads/app_logo_68515bafdd89e_1750162351.png"
-                alt="Logo"
-                width={150}
-                height={40}
-              />
-              <img
-                className="hidden dark:block"
-                src="https://cdn.amazons.co.ke/storage/images/uploads/app_logo_68515bafdd89e_1750162351.png"
-                alt="Logo"
-                width={150}
-                height={40}
-              />
+              {logos.appLogo && (
+                <img
+                  className="dark:hidden"
+                  src={logos.appLogo}
+                  alt="Logo"
+                  width={150}
+                  height={40}
+                />
+              )}
+              {logos.appLogoWhite && (
+                <img
+                  className="hidden dark:block"
+                  src={logos.appLogoWhite}
+                  alt="Logo Dark"
+                  width={150}
+                  height={40}
+                />
+              )}
             </>
           ) : (
-            <img
-              src="/images/favicon.png"
-              alt="Logo"
-              width={32}
-              height={32}
-            />
+            <>
+              {logos.iconLogo && (
+                <img
+                  src={logos.iconLogo}
+                  alt="Logo Icon"
+                  width={32}
+                  height={32}
+                />
+              )}
+            </>
           )}
         </Link>
       </div>
@@ -357,11 +425,9 @@ const AppSidebar: React.FC = () => {
                   <HorizontaLDots />
                 )}
               </h2>
-
             </div>
           </div>
         </nav>
-
       </div>
     </aside>
   );

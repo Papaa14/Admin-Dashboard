@@ -9,7 +9,7 @@ import {
 } from "../ui/table";
 import Badge from "../ui/badge/Badge";
 import api from '../../Api/api'; // Assuming your api setup is in this path
-import { showErrorToast } from '../../components/ui/alert/ToastMessages'; // Assuming this path
+import { showErrorToast } from '../ui/alert/ToastMessages'; // Assuming this path
 
 // 1. INTERFACES
 // =================================================================
@@ -46,7 +46,7 @@ const isAxiosError = (error: unknown): error is { response?: { data?: { message?
 
 // 3. REACT COMPONENT
 // =================================================================
-export default function RecentOrders() {
+export default function RecentTickets() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
