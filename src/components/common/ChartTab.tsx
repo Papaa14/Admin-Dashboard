@@ -1,45 +1,36 @@
-import { useState } from "react";
 
-const ChartTab: React.FC = () => {
-  const [selected, setSelected] = useState<
-    "optionOne" | "optionTwo" | "optionThree"
-  >("optionOne");
 
-  const getButtonClass = (option: "optionOne" | "optionTwo" | "optionThree") =>
-    selected === option
-      ? "shadow-theme-xs text-gray-900 dark:text-white bg-white dark:bg-gray-800"
-      : "text-gray-500 dark:text-gray-400";
+type TimePeriod = 'monthly' | 'quarterly' | 'annually';
+
+interface ChartTabProps {
+  activeTab: TimePeriod;
+  onTabChange: (tab: TimePeriod) => void;
+}
+
+export default function ChartTab({ activeTab, onTabChange }: ChartTabProps) {
+  const tabs: { id: TimePeriod; label: string }[] = [
+    { id: 'monthly', label: 'Monthly' },
+    { id: 'quarterly', label: 'Quarterly' },
+    { id: 'annually', label: 'Annually' },
+  ];
 
   return (
-    <div className="flex items-center gap-0.5 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-900">
-      <button
-        onClick={() => setSelected("optionOne")}
-        className={`px-3 py-2 font-medium w-full rounded-md text-theme-sm hover:text-gray-900   dark:hover:text-white ${getButtonClass(
-          "optionOne"
-        )}`}
-      >
-        Monthly
-      </button>
-
-      <button
-        onClick={() => setSelected("optionTwo")}
-        className={`px-3 py-2 font-medium w-full rounded-md text-theme-sm hover:text-gray-900   dark:hover:text-white ${getButtonClass(
-          "optionTwo"
-        )}`}
-      >
-        Quarterly
-      </button>
-
-      <button
-        onClick={() => setSelected("optionThree")}
-        className={`px-3 py-2 font-medium w-full rounded-md text-theme-sm hover:text-gray-900   dark:hover:text-white ${getButtonClass(
-          "optionThree"
-        )}`}
-      >
-        Annually
-      </button>
+    <div className="flex p-1 space-x-1 bg-gray-100 rounded-lg dark:bg-gray-800">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          onClick={() => onTabChange(tab.id)}
+          className={`w-full px-4 py-1.5 text-sm font-semibold rounded-md transition-colors focus:outline-none
+            ${
+              activeTab === tab.id
+                ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-900/80 dark:text-white'
+                : 'text-gray-600 hover:bg-white/60 dark:text-gray-400 dark:hover:bg-gray-700/50'
+            }
+          `}
+        >
+          {tab.label}
+        </button>
+      ))}
     </div>
   );
-};
-
-export default ChartTab;
+}

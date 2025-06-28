@@ -4,7 +4,7 @@ import api from "../../Api/api";
 import PageMeta from "../../components/common/PageMeta";
 import PageBreadcrumb from "../../components/common/PageBreadCrumb";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
-import { Edit2, Trash2, Save, X, Upload, Plus, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { Edit2, Trash2, Save, X, Plus,Upload, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { showSuccessToast, showErrorToast, confirmDelete } from '../../components/ui/alert/ToastMessages';
 
 
@@ -34,9 +34,6 @@ interface Pagination {
   prev_page_url: string | null;
 }
 
-// ConfigData represents the structure of configuration data returned by the API,
-// where each key corresponds to a config name and its value can be a string, 
-// an object with optional path/url/id, an array of support numbers, or a generic object.
 interface ConfigData {
   [key: string]: {
     path?: string;
@@ -80,7 +77,11 @@ const ConfigForm = () => {
   const [prevPageUrl, setPrevPageUrl] = useState<string | null>(null);
   const [currentFetchUrl, setCurrentFetchUrl] = useState('/config/all');
 
+  // --- NEW STATE FOR UPLOAD MODE ---
+  const [uploadMode, setUploadMode] = useState<'single' | 'multiple'>('single');
+
   // --- DATA FETCHING ---
+  // --- CORRECTED DATA FETCHING LOGIC ---
   const fetchConfigs = useCallback(async (url: string) => {
     setIsLoading(true);
     setError(null);
@@ -100,22 +101,35 @@ const ConfigForm = () => {
         setAvatarPaths([]);
 
         Object.entries(configData).forEach(([key, value]) => {
-          if (key === 'avatar_paths' && typeof value === 'object' && value !== null) {
-            const avatarMap = value as Record<string, Record<string, { path: string; url: string; id?: string }>>;
-            Object.entries(avatarMap).forEach(([groupId, groupAvatars]) => {
-              Object.entries(groupAvatars).forEach(([avatarIndex, avatarData]) => {
+          
+          // --- THIS IS THE KEY FIX for the new 'avatar_paths' structure ---
+          // It's not an array, but a nested object. We check for a non-array object.
+          if (key === 'avatar_paths' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+            // `value` is the outer object, e.g., { "7": { ... } }
+            // We iterate over its values to get each group, e.g., [ { "0": {...}, "1": {...} } ]
+            Object.values(value as object).forEach(avatarGroup => {
+              
+              // `avatarGroup` is the inner object, e.g., { "0": {...}, "1": {...} }
+              // We iterate over its values to get the final avatar data objects.
+              Object.values(avatarGroup as object).forEach(avatarData => {
+                
+                // Now `avatarData` is { id: "...", url: "..." }
                 if (avatarData && typeof avatarData === 'object' && 'url' in avatarData) {
-                  const uniqueId = `avatar_path_${groupId}_${avatarIndex}`;
+                  const data = avatarData as { path: string; url: string; id?: string };
                   loadedAvatars.push({
                     id: Date.now() + loadedAvatars.length,
-                    originalId: avatarData.id || uniqueId,
-                    url: avatarData.url,
-                    name: `Avatar ${avatarData.id || uniqueId}`
+                    originalId: data.id || `avatar_${loadedAvatars.length}`,
+                    url: data.url,
+                    name: `Avatar ${data.id || loadedAvatars.length + 1}`
                   });
                 }
               });
             });
-            transformedConfigs.push({ name: 'avatar_paths', value: `${loadedAvatars.length} avatars loaded` });
+
+            if (loadedAvatars.length > 0) {
+              transformedConfigs.push({ name: 'avatar_paths', value: `${loadedAvatars.length} avatars loaded` });
+            }
+
           } else if (key === 'support_number' && Array.isArray(value)) {
             const supportNumbersData = value as Array<SupportNumber>;
             setSupportNumbers(supportNumbersData);
@@ -152,9 +166,8 @@ const ConfigForm = () => {
   const handleEdit = (config: Config) => setEditingConfig(config);
   const handleCancelEdit = () => setEditingConfig(null);
   const handleAvatarEdit = (avatarId: number) => setEditingAvatarId(avatarId);
-  const handleFileSelect = (file: File | null) => file && setNewConfigFiles([file]);
+  const handleFileSelect = (file: File | null) => setNewConfigFiles(file ? [file] : []);
   const handleFilesSelect = (files: File[]) => setNewConfigFiles(files);
-
 
   const handleSave = async (id?: number) => {
     if (!editingConfig) return;
@@ -177,8 +190,10 @@ const ConfigForm = () => {
   const handleSingleFileUpdate = async (file: File | null) => {
     if (!file || !editingConfig) return;
     const formData = new FormData();
-    formData.append('config_name', editingConfig.name);
+    formData.append('config_name', editingConfig.name);   
     formData.append('file', file);
+  
+
     try {
       const response = await api.post('/config/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       if (response.data.status === 'success') {
@@ -246,50 +261,86 @@ const ConfigForm = () => {
     });
   };
 
+  // --- UPDATED ADD NEW CONFIG HANDLER ---
   const handleAddNewConfig = async () => {
+    if (!newConfigName.trim()) {
+      showErrorToast("Config Name is required.");
+      return;
+    }
+  
     try {
       let response;
-      if (newConfigFiles.length > 0) {
+  
+      // Case 1: File upload (handles both single and multiple)
+      if (inputType === 'file') {
+        if (newConfigFiles.length === 0) {
+          showErrorToast("Please select at least one file.");
+          return;
+        }
+  
         const formData = new FormData();
         formData.append('config_name', newConfigName);
-        newConfigFiles.forEach(file => formData.append('file[]', file));
-        response = await api.post('/config/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        // Append the 'is_multiple' flag based on the radio button state
+        formData.append('is_multiple', uploadMode === 'multiple' ? '1' : '0');
+  
+        // Append all selected files under the 'files[]' key
+        newConfigFiles.forEach((file) => {
+          formData.append('files[]', file);
+        });
+  
+        response = await api.post('/config/upload-multiple', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+  
+      // Case 2: Plain text config upload
+      } else if (inputType === 'text') {
+        if (!newConfigValue.trim()) {
+            showErrorToast("Please provide a Config Value.");
+            return;
+        }
+        response = await api.post('/config/upload-configValue', {
+          config_name: newConfigName,
+          config_value: newConfigValue,
+        });
+  
       } else {
-        response = await api.post('/comfig/upload-configValue', { config_name: newConfigName, config_value: newConfigValue });
+        showErrorToast("Invalid input type selected.");
+        return;
       }
-
+  
+      // Handle successful response
       if (response.data.status === 'success') {
         setShowAddForm(false);
         setNewConfigName('');
         setNewConfigValue('');
         setNewConfigFiles([]);
-        showSuccessToast('Configuration added successfully!');
-        fetchConfigs('/config/all');
+        setUploadMode('single'); // Reset upload mode
+        showSuccessToast(response.data.message || 'Configuration added successfully!');
+        fetchConfigs('/config/all'); // Refetch all data from the first page
       }
-    }  catch (error: unknown) {
-    const message = isAxiosError(error) ? error.response?.data?.message : 'Failed to add new configuration';
-    showErrorToast(message || 'Failed to add new configuration');
-  }
+    } catch (error: unknown) {
+      const message = isAxiosError(error) ? error.response?.data?.message : 'Failed to add new configuration';
+      showErrorToast(message || 'Failed to add new configuration');
+    }
   };
+
 
   const handleTextInputChange = (id: number) => (e: ChangeEvent<HTMLInputElement>) => {
     setSupportNumbers(numbers => numbers.map(n => n.id === id ? { ...n, value: e.target.value } : n));
   };
 
-  // --- PAGINATION NAVIGATION ---
-const handlePageNavigation = (url: string | null) => {
-  if (url) {
-    try {
-      const urlObject = new URL(url);
-      // Just use the search parameters with the base endpoint
-      const searchParams = urlObject.search;
-      fetchConfigs(`/config/all${searchParams}`);
-    } catch {
-      console.error("Invalid pagination URL:", url);
-      showErrorToast("Invalid navigation link provided by the API.");
+  const handlePageNavigation = (url: string | null) => {
+    if (url) {
+      try {
+        const urlObject = new URL(url);
+        const searchParams = urlObject.search;
+        fetchConfigs(`/config/all${searchParams}`);
+      } catch {
+        console.error("Invalid pagination URL:", url);
+        showErrorToast("Invalid navigation link provided by the API.");
+      }
     }
-  }
-};
+  };
 
   const isImageConfig = (configName: string | undefined, value: string) => {
     if (!configName) return false;
@@ -297,12 +348,10 @@ const handlePageNavigation = (url: string | null) => {
     return imageKeys.includes(configName) || (value && value.match(/\.(jpeg|jpg|gif|png|svg)$/i));
   };
 
-  // Separate config types for rendering
   const regularConfigs = configs.filter(c => c.name !== 'avatar_paths' && c.name !== 'support_number');
   const avatarPathsConfig = configs.find(c => c.name === 'avatar_paths');
   const supportNumberConfig = configs.find(c => c.name === 'support_number');
 
-  // --- RENDER LOGIC ---
   if (error && !isLoading) {
     return <div className="p-4 text-center text-red-600 bg-red-50 rounded-lg">{error}</div>;
   }
@@ -324,7 +373,7 @@ const handlePageNavigation = (url: string | null) => {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Config Name</label>
-              <input type="text" value={newConfigName} onChange={(e) => setNewConfigName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-600 dark:text-white" placeholder="e.g., app_logo, avatar_paths" />
+              <input type="text" value={newConfigName} onChange={(e) => setNewConfigName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-600 dark:text-white" placeholder="e.g., app_logo, social_links" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Input Type</label>
@@ -339,9 +388,43 @@ const handlePageNavigation = (url: string | null) => {
                 <input type="text" value={newConfigValue} onChange={(e) => setNewConfigValue(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-600 dark:text-white" />
               </div>
             ) : (
-              <div className="transition-all duration-200 ease-in-out">
+              <div className="transition-all duration-200 ease-in-out space-y-4">
+                  <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Upload Type</label>
+                      <div className="flex items-center gap-6">
+                          <label className="flex items-center cursor-pointer">
+                              <input
+                                  type="radio"
+                                  name="uploadMode"
+                                  value="single"
+                                  checked={uploadMode === 'single'}
+                                  onChange={() => { setUploadMode('single'); setNewConfigFiles([]); }}
+                                  className="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                              />
+                              <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Single File (Replaces existing)</span>
+                          </label>
+                          <label className="flex items-center cursor-pointer">
+                              <input
+                                  type="radio"
+                                  name="uploadMode"
+                                  value="multiple"
+                                  checked={uploadMode === 'multiple'}
+                                  onChange={() => { setUploadMode('multiple'); setNewConfigFiles([]); }}
+                                  className="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                              />
+                              <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Multiple Files (Adds to existing)</span>
+                          </label>
+                      </div>
+                  </div>
+
                 <div className="p-4 border border-gray-200 rounded-md dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-                  <ImageUploadCard title={newConfigName === 'avatar_paths' ? "Upload Multiple Avatars" : "Upload Image"} rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 200 }} type={newConfigName === 'avatar_paths' ? "collection" : "single"} onFileSelect={handleFileSelect} onFilesSelect={handleFilesSelect} />
+                  <ImageUploadCard
+                    title={uploadMode === 'multiple' ? "Upload Multiple Files" : "Upload Single File"}
+                    rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 20 }}
+                    type={uploadMode === 'multiple' ? 'collection' : 'single'}
+                    onFileSelect={handleFileSelect}
+                    onFilesSelect={handleFilesSelect}
+                  />
                 </div>
               </div>
             )}
@@ -353,6 +436,7 @@ const handlePageNavigation = (url: string | null) => {
         </div>
       )}
 
+      {/* --- TABLE AND DISPLAY LOGIC (UNCHANGED) --- */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-white/[0.05] dark:bg-white/[0.03]">
         <div className="max-w-full overflow-x-auto">
           <Table>
@@ -379,7 +463,7 @@ const handlePageNavigation = (url: string | null) => {
                             <div className="space-y-4">
                               <div className="flex items-center gap-4">
                                 <img src={config.value} alt="Preview" className="w-20 h-20 object-contain rounded-lg border border-gray-200 dark:border-gray-600" />
-                                <ImageUploadCard title={`Update ${editingConfig.name}`} rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 200 }} type="single" onFileSelect={handleSingleFileUpdate} />
+                                <ImageUploadCard title={`Update ${editingConfig.name}`} rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 1 }} type="single" onFileSelect={handleSingleFileUpdate} />
                               </div>
                             </div>
                           ) : (
@@ -420,52 +504,83 @@ const handlePageNavigation = (url: string | null) => {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {avatarPathsConfig && (
-                    <TableRow className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
-                      <TableCell className="px-6 py-4 text-start">
-                        <div className="font-medium text-gray-800 dark:text-gray-200">Avatar Paths</div>
-                      </TableCell>
-                      <TableCell className="px-6 py-4 text-start">
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                            {avatarPaths.map((avatar) => (
-                              <div key={avatar.id} className="relative group">
-                                <div className="aspect-square rounded-lg overflow-hidden border-2 border-gray-200 hover:border-blue-300 transition-colors">
-                                  <img src={avatar.url} alt={avatar.name} className="w-full h-full object-cover" />
-                                </div>
-                                <div className="text-xs text-center mt-1 text-gray-500 truncate">{avatar.name.split('.')[0]}</div>
-                                {editingAvatarId === avatar.id ? (
-                                  <div className="absolute inset-0 bg-white/90 dark:bg-gray-800/90 rounded-lg flex flex-col items-center justify-center p-2 space-y-2">
-                                    <ImageUploadCard title="" rules={{ mimes: ['image/svg+xml', 'image/png', 'image/jpg', 'image/jpeg'], max: 200 }} type="single" onFileSelect={(file) => handleAvatarUpdate(file, avatar)} />
-                                    <div className="flex justify-center space-x-2">
-                                      <button onClick={() => setEditingAvatarId(null)} className="px-3 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600">Cancel</button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                                    <button onClick={() => handleAvatarEdit(avatar.id)} className="p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 shadow-sm" title="Edit">
-                                      <Edit2 size={14} />
-                                    </button>
-                                    <button onClick={() => handleDeleteAvatar(avatar)} className="p-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 shadow-sm" title="Delete">
-                                      <Trash2 size={14} />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                          {avatarPaths.length === 0 && <div className="text-gray-400 italic py-4">No avatars uploaded yet</div>}
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-6 py-4 text-start">
-                        <div className="flex items-center gap-3">
-                          <button onClick={() => { setNewConfigName('avatar_paths'); setShowAddForm(true); }} className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-full transition-colors" title="Add avatars">
-                            <Upload size={18} />
-                          </button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
+                 {avatarPathsConfig && (
+  <TableRow className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
+    <TableCell className="px-6 py-4 text-start">
+      <div className="font-medium text-gray-800 dark:text-gray-200">Avatar Paths</div>
+    </TableCell>
+    <TableCell className="px-6 py-4 text-start">
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {avatarPaths.map((avatar) => (
+            <div key={avatar.id} className="relative group">
+              <div className="aspect-square rounded-lg overflow-hidden border-2 border-gray-200 hover:border-blue-300 transition-colors">
+                <img src={avatar.url} alt={avatar.name} className="w-full h-full object-cover" />
+              </div>
+              <div className="text-xs text-center mt-1 text-gray-500 truncate">{avatar.name.split('.')[0]}</div>
+              {editingAvatarId === avatar.id ? (
+                <div className="absolute inset-0 bg-white/90 dark:bg-gray-800/90 rounded-lg flex flex-col items-center justify-center p-2 space-y-2">
+                  <ImageUploadCard
+                    title="Upload New Avatar"
+                    rules={{ mimes: ['image/svg+xml', 'image/png', 'image/jpg', 'image/jpeg'], max: 1 }}
+                    type="single"
+                    onFileSelect={(file) => handleAvatarUpdate(file, avatar)}
+                  />
+                  <div className="flex justify-center space-x-2">
+                    <button
+                      onClick={() => setEditingAvatarId(null)}
+                      className="px-3 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                  <button
+                    onClick={() => handleAvatarEdit(avatar.id)}
+                    className="p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 shadow-sm"
+                    title="Edit"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteAvatar(avatar)}
+                    className="p-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 shadow-sm"
+                    title="Delete"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {avatarPaths.length === 0 && (
+          <div className="text-gray-400 italic py-4">No avatars uploaded yet</div>
+        )}
+      </div>
+    </TableCell>
+    <TableCell className="px-6 py-4 text-start align-top">
+      <div className="flex flex-col items-start gap-3">
+        <button
+          onClick={() => {
+            setShowAddForm(true);
+            setInputType('file');
+            setUploadMode('multiple');
+            setNewConfigName('avatar_paths');
+          }}
+          className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-full transition-colors"
+          title="Add new avatars"
+        >
+          <Upload size={18} />
+        </button>
+        <span className="text-xs text-gray-500">Upload more avatars</span>
+      </div>
+    </TableCell>
+  </TableRow>
+)}
+
                   {supportNumberConfig && (
                     <TableRow className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
                       <TableCell className="px-6 py-4 text-start">

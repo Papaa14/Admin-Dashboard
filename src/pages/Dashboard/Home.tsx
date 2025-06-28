@@ -1,5 +1,5 @@
 import EcommerceMetrics from "../../components/ecommerce/EcommerceMetrics";
-import MonthlySalesChart from "../../components/ecommerce/MonthlySalesChart";
+import MonthlySalesChart from "../../components/ecommerce/MonthlyTicketStatusChart";
 import StatisticsChart from "../../components/ecommerce/StatisticsChart";
 import MonthlyTarget from "../../components/ecommerce/MonthlyTarget";
 import RecentTickets from "../../components/ecommerce/RecentTickets";

@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router";
-import SignIn from "./pages/AuthPages/SignIn";
-import SignUp from "./pages/AuthPages/SignUp";
+import AdminPortal from "./pages/AuthPages/Login";
+import ResetPassord from "./pages/AuthPages/ResetPassword";
+// import SignUp from "./pages/AuthPages/SignUp";
 import NotFound from "./pages/OtherPage/NotFound";
 import TicketChatView from "./pages/OtherPage/TicketChat";
 import UserProfiles from "./pages/UserProfiles";
@@ -34,7 +35,7 @@ export default function App() {
         <Routes>
           {/* Dashboard Layout */}
           <Route element={<AppLayout />}>
-            <Route index path="/" element={<Home />} />
+            <Route index path="/home" element={<Home />} />
 
             {/* Others Page */}
             <Route path="/profile" element={<UserProfiles />} />
@@ -66,8 +67,9 @@ export default function App() {
           </Route>
 
           {/* Auth Layout */}
-          <Route path="/signin" element={<SignIn />} />
-          <Route path="/signup" element={<SignUp />} />
+          <Route path="/" element={<AdminPortal />} />
+           <Route path="/reset" element={<ResetPassord />} />
+          {/* <Route path="/signup" element={<SignUp />} /> */}
 
           {/* Fallback Route */}
           <Route path="*" element={<NotFound />} />
