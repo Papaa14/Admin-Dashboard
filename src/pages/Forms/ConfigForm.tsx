@@ -22,6 +22,11 @@ interface Avatar {
   url: string;
   name: string;
 }
+interface GroupItem {
+  id: string;
+  url: string;
+  created_at?: string; // Optional if not always present
+}
 
 interface SupportNumber {
   id: number;
@@ -128,14 +133,29 @@ const ConfigForm = () => {
         } else if (typeof value === 'string') {
           transformedConfigs.push({ name: key, value: value });
         } else if (typeof value === 'object' && value !== null) {
-          // Handle nested objects generically
-          Object.entries(value).forEach(([nestedKey, nestedValue]) => {
-            if (typeof nestedValue === 'object' && nestedValue !== null && 'url' in nestedValue && 'id' in nestedValue) {
-              const nv = nestedValue as { url: string; id?: string };
-              transformedConfigs.push({ name: `${key}_${nestedKey}`, value: nv.url, id: nv.id });
-            }
-          });
-        }
+  // Check if it's a group of images (like avatar_paths but more generic)
+  const groupItems = Object.entries(value)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    .filter(([_, item]) => typeof item === 'object' && item !== null && 'url' in item && 'id' in item)
+    .map(([index, item]) => ({
+      id: (item as GroupItem).id,
+      name: `${key}_${index}`,
+      url: (item as GroupItem).url,
+      created_at: (item as GroupItem).created_at,
+    }));
+
+  if (groupItems.length > 0) {
+    // Treat this as a grouped item (like 'images', 'banners', etc.)
+    transformedConfigs.push({ name: key, value: JSON.stringify(groupItems) });
+  } else {
+    // fallback to flat subfields (non-image nested object)
+    Object.entries(value).forEach(([nestedKey, nestedValue]) => {
+      if (typeof nestedValue === 'string') {
+        transformedConfigs.push({ name: `${key}_${nestedKey}`, value: nestedValue });
+      }
+    });
+  }
+}
       });
 
       setAvatarPaths(loadedAvatars);
@@ -232,8 +252,9 @@ const handleDelete = async (config: Config) => {
   await confirmDelete(readableName, async () => {
     try {
       if (config.id) {
+        
         // For grouped config items (like images, banners, etc.)
-        const response = await api.delete(`/config/delete/${config.id}`, {
+        const response = await api.delete(`/config/delete-file/${config.id}`, {
           data: { config_name: config.name }
         });
         showSuccessToast(response.data.message || "Item deleted successfully");
@@ -473,58 +494,150 @@ const handleDelete = async (config: Config) => {
                 <TableRow><TableCell colSpan={3} className="text-center py-10"><Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-500" /></TableCell></TableRow>
               ) : (
                 <>
-                  {regularConfigs.map((config, index) => (
-                    <TableRow key={`${config.name}-${index}`} className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
-                      <TableCell className="px-6 py-4 text-start">
-                        <div className="font-medium text-gray-800 dark:text-gray-200">{config.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</div>
-                      </TableCell>
-                      <TableCell className="px-6 py-4 text-start">
-                        {editingConfig?.name === config.name ? (
-                          isImageConfig(config.name, config.value) ? (
-                            <div className="space-y-4">
-                              <div className="flex items-center gap-4">
-                                <img src={config.value} alt="Preview" className="w-20 h-20 object-contain rounded-lg border border-gray-200 dark:border-gray-600" />
-                                <ImageUploadCard title={`Update ${editingConfig.name}`} rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 1 }} type="single" onFileSelect={handleSingleFileUpdate} />
-                              </div>
-                            </div>
-                          ) : (
-                            <input type="text" value={editingConfig.value} onChange={(e) => setEditingConfig({ ...editingConfig, value: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-600 dark:text-white" />
-                          )
-                        ) : (
-                          <div className="text-gray-600 dark:text-gray-300">
-                            {isImageConfig(config.name, config.value) ? (
-                              <img src={config.value} alt="Preview" className="max-w-[200px] max-h-[200px] object-contain rounded-lg border border-gray-200 dark:border-gray-600" />
-                            ) : (
-                              <span className="break-words">{config.value}</span>
-                            )}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-6 py-4 text-start">
-                        <div className="flex items-center gap-3">
-                          {editingConfig?.name === config.name ? (
-                            <>
-                              {!isImageConfig(config.name, config.value) && (
-                                <button onClick={() => handleSave()} className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-full transition-colors" title="Save">
-                                  <Save size={18} />
-                                </button>
-                              )}
-                              <button onClick={handleCancelEdit} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors" title="Cancel">
-                                <X size={18} />
-                              </button>
-                            </>
-                          ) : (
-                            <button onClick={() => handleEdit(config)} className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full transition-colors" title="Edit">
-                              <Edit2 size={18} />
-                            </button>
-                          )}
-                          <button onClick={() => handleDelete(config)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors" title="Delete">
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                 {regularConfigs.map((config, index) => {
+  // Check if the configuration is a grouped item
+  if (config.name === 'images' || config.name === 'support_banners') {
+    const groupItems: GroupItem[] = JSON.parse(config.value);
+    return (
+      <TableRow key={`${config.name}-${index}`} className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
+        <TableCell className="px-6 py-4 text-start">
+          <div className="font-medium text-gray-800 dark:text-gray-200">
+            {config.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+          </div>
+        </TableCell>
+        <TableCell className="px-6 py-4 text-start">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {groupItems.map((item) => (
+              <div key={item.id} className="relative group">
+                <div className="aspect-square rounded-lg overflow-hidden border-2 border-gray-200 hover:border-blue-300 transition-colors">
+                  <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                </div>
+                <div className="text-xs text-center mt-1 text-gray-500 truncate">
+                  {item.name.split('.')[0]}
+                </div>
+                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                  <button
+                    onClick={() => handleEdit({ ...config, id: item.id })}
+                    className="p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 shadow-sm"
+                    title="Edit"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleDelete({ ...config, id: item.id })}
+                    className="p-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 shadow-sm"
+                    title="Delete"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </TableCell>
+        <TableCell className="px-6 py-4 text-start">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                setShowAddForm(true);
+                setInputType('file');
+                setUploadMode('multiple');
+                setNewConfigName(config.name);
+              }}
+              className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-full transition-colors"
+              title="Add new images"
+            >
+              <Upload size={18} />
+            </button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  } else {
+    // Handle regular configurations
+    return (
+      <TableRow key={`${config.name}-${index}`} className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
+        <TableCell className="px-6 py-4 text-start">
+          <div className="font-medium text-gray-800 dark:text-gray-200">
+            {config.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+          </div>
+        </TableCell>
+        <TableCell className="px-6 py-4 text-start">
+          {editingConfig?.name === config.name ? (
+            isImageConfig(config.name, config.value) ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-4">
+                  <img src={config.value} alt="Preview" className="w-20 h-20 object-contain rounded-lg border border-gray-200 dark:border-gray-600" />
+                  <ImageUploadCard
+                    title={`Update ${editingConfig.name}`}
+                    rules={{ mimes: ['image/png', 'image/jpg', 'image/jpeg', 'image/svg+xml'], max: 1 }}
+                    type="single"
+                    onFileSelect={handleSingleFileUpdate}
+                  />
+                </div>
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={editingConfig.value}
+                onChange={(e) => setEditingConfig({ ...editingConfig, value: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-600 dark:text-white"
+              />
+            )
+          ) : (
+            <div className="text-gray-600 dark:text-gray-300">
+              {isImageConfig(config.name, config.value) ? (
+                <img src={config.value} alt="Preview" className="max-w-[200px] max-h-[200px] object-contain rounded-lg border border-gray-200 dark:border-gray-600" />
+              ) : (
+                <span className="break-words">{config.value}</span>
+              )}
+            </div>
+          )}
+        </TableCell>
+        <TableCell className="px-6 py-4 text-start">
+          <div className="flex items-center gap-3">
+            {editingConfig?.name === config.name ? (
+              <>
+                {!isImageConfig(config.name, config.value) && (
+                  <button
+                    onClick={() => handleSave()}
+                    className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-full transition-colors"
+                    title="Save"
+                  >
+                    <Save size={18} />
+                  </button>
+                )}
+                <button
+                  onClick={handleCancelEdit}
+                  className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
+                  title="Cancel"
+                >
+                  <X size={18} />
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => handleEdit(config)}
+                className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full transition-colors"
+                title="Edit"
+              >
+                <Edit2 size={18} />
+              </button>
+            )}
+            <button
+              onClick={() => handleDelete(config)}
+              className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
+              title="Delete"
+            >
+              <Trash2 size={18} />
+            </button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+})}
+
                   {avatarPathsConfig && (
                     <TableRow className="hover:bg-gray-50 dark:hover:bg-white/[0.02]">
                       <TableCell className="px-6 py-4 text-start">
